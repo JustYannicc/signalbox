@@ -1,3 +1,4 @@
+import { ClaudeRuntimeConfiguration } from "./fixture/configuration.schema.ts";
 import * as Schema from "effect/Schema";
 import { HARNESS_C_PRODUCT_CAPABILITY_KEYS as Keys } from "../../../src/harness/HarnessCProductCapabilities.ts";
 import { PreparedRelease } from "./preparedRelease.schema.ts";
@@ -43,6 +44,7 @@ export const QualifierClaudeInputs = Schema.Struct({
   CONFIG_SHA256: QualifierHash,
   QUALIFIER_CLAUDE_VARIANT: Schema.Literals(["baseline", "hooks"]),
   QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT: QualifierClaudeProcessEnvironment,
+  QUALIFIER_CLAUDE_RUNTIME: ClaudeRuntimeConfiguration,
 });
 export const QualifierCodexInputs = Schema.Struct({
   QUALIFIER_CONFIGURATION: Schema.Struct({
@@ -148,7 +150,11 @@ const decodeClaudeInputs = Schema.decodeUnknownSync(QualifierClaudeInputs);
 const decodeCodexInputs = Schema.decodeUnknownSync(QualifierCodexInputs);
 
 export function qualifierClaudeFacetInputs(
-  environment: { readonly RUN_ID: string; readonly CONFIG_SHA256: string },
+  environment: {
+    readonly RUN_ID: string;
+    readonly CONFIG_SHA256: string;
+    readonly runtime: typeof ClaudeRuntimeConfiguration.Type;
+  },
   variant: "baseline" | "hooks",
 ) {
   return decodeClaudeInputs({
@@ -156,6 +162,7 @@ export function qualifierClaudeFacetInputs(
     CONFIG_SHA256: environment.CONFIG_SHA256,
     QUALIFIER_CLAUDE_VARIANT: variant,
     QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT: qualifierClaudeProcessEnvironment(),
+    QUALIFIER_CLAUDE_RUNTIME: environment.runtime,
   });
 }
 

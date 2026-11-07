@@ -10,14 +10,21 @@ import type { createClaudeCliFacetClass } from "./ClaudeCliSession.ts";
 import type { ClaudeCliHost } from "./ClaudeCliKernelPort.ts";
 import type { ClaudeSdkHostService } from "./ClaudeSdkHostProtocol.ts";
 
+/** Builds one owner's code from assets or bytes. Only the loader calls it, once per load. */
+export type ClaudeOwnerCodeFactory = () => WorkerLoaderWorkerCode | Promise<WorkerLoaderWorkerCode>;
+
 export interface ClaudeProductOwnerRuntime {
   readonly loader: WorkerLoader;
   readonly facets: DurableObjectState["facets"];
+  /**
+   * Factories, never code: the CLI alone is about 49 MB of module source, and a thread that held it
+   * for its owners' lifetime would spend most of its 128 MiB isolate on bytes the loader already has.
+   */
   readonly code: {
-    readonly kernel: WorkerLoaderWorkerCode;
-    readonly cli: WorkerLoaderWorkerCode;
-    readonly computer: WorkerLoaderWorkerCode;
-    readonly sdk: WorkerLoaderWorkerCode;
+    readonly kernel: ClaudeOwnerCodeFactory;
+    readonly cli: ClaudeOwnerCodeFactory;
+    readonly computer: ClaudeOwnerCodeFactory;
+    readonly sdk: ClaudeOwnerCodeFactory;
   };
   /**
    * Each owner bundle's digest, from the build that produced it. The loader keeps a Worker under
@@ -40,7 +47,8 @@ type ComputerOwner = ComputerProgramOwnerPort & {
 /**
  * Normal thread startup provisions each owner from its own registered module map. Each Worker is
  * keyed by its bundle's build digest, and the CLI's also by the Claude release it runs, so the
- * loader never pairs one release's CLI with another's kernel. The code itself is never read here.
+ * loader never pairs one release's CLI with another's kernel. Each factory runs only inside the
+ * loader's own callback, so no owner's code is built or kept here.
  */
 export function createClaudeProductOwners(
   runtime: ClaudeProductOwnerRuntime,
@@ -82,7 +90,7 @@ export function createClaudeProductOwners(
     entrypoint: string,
   ) => {
     const key = `${name}:${role}`;
-    const worker = runtime.loader.get(`${key}:${version[role]}`, () => runtime.code[role]);
+    const worker = runtime.loader.get(`${key}:${version[role]}`, runtime.code[role]);
     stubs.push(worker);
     const facetClass = worker.getDurableObjectClass<T>(entrypoint);
     stubs.push(facetClass);
@@ -98,7 +106,7 @@ export function createClaudeProductOwners(
       "ClaudeCliFacet",
     );
     const computer = openFacet<ComputerExecutionObject>("computer", "ComputerExecutionObject");
-    const sdkWorker = runtime.loader.get(`${name}:sdk:${version.sdk}`, () => runtime.code.sdk);
+    const sdkWorker = runtime.loader.get(`${name}:sdk:${version.sdk}`, runtime.code.sdk);
     stubs.push(sdkWorker);
     const sdk = sdkWorker.getEntrypoint();
     stubs.push(sdk);

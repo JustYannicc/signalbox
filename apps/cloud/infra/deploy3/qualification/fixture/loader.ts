@@ -8,7 +8,12 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { createAssetChildWorkerLoader } from "../../../../src/computer/CompiledChildWorkerLoader.ts";
 import type { ChildWorkerLoaderPort } from "../../../../src/computer/WorkerLoaderDispatch.ts";
 import type { ChildWorkerInvocation } from "../../../../src/computer/ChildWorkerProgram.ts";
-import { observeWorkerCode, type ObserverLoaderPin } from "./loaderObservation.ts";
+import {
+  observeWorkerCode,
+  platformLoader,
+  registerObservedLoader,
+  type ObserverLoaderPin,
+} from "./loaderObservation.ts";
 import type { QualifierEnvironment } from "./environment.ts";
 import { proof } from "./environment.ts";
 import { readAsset, readConfiguration } from "./configuration.ts";
@@ -74,10 +79,13 @@ export function qualifierFacetLoader(
   tail: Fetcher,
   ctx: DurableObjectState,
 ): WorkerLoader {
-  return {
+  // A caller holding the shard's environment passes an already-observing loader; observing through
+  // it again would prepare and materialize every owner twice, so always reach the platform loader.
+  const platform = platformLoader(env.LOADER);
+  return registerObservedLoader(platform, {
     get(name, getCode) {
       assert(typeof name === "string" && name.length > 0, "Facet loader identity is missing");
-      return ownedClaudeFacetWorker(ctx, env.LOADER, name, async (owners) => {
+      return ownedClaudeFacetWorker(ctx, platform, name, async (owners) => {
         const actual = await getCode();
         const config = await readConfiguration(env.PROGRAM_ASSETS, env.CONFIG_SHA256);
         if (
@@ -92,30 +100,37 @@ export function qualifierFacetLoader(
             sdkHost: (code) => loadClaudeSdkHost(`${name}:sdk-host`, code),
             kernel: (code) =>
               owners.kernel(
-                observeWorkerCode(
-                  code,
-                  env.RUN_ID,
-                  {
-                    loaderId: `${name}:kernel`,
-                    role: "facet",
-                    entrypoint: "ClaudeKernelFacet",
-                    identity: `kernel:claude:${name}`,
-                    tag: "actual-claude-kernel",
-                    calls: {
-                      identity: [
-                        { callId: "*", route: { method: "POST", path: "/claude/kernel/inspect" } },
-                      ],
-                      isolateNonceProbe: [
-                        { callId: "*", route: { method: "POST", path: "/claude/kernel/inspect" } },
-                      ],
+                async () =>
+                  observeWorkerCode(
+                    await code(),
+                    env.RUN_ID,
+                    {
+                      loaderId: `${name}:kernel`,
+                      role: "facet",
+                      entrypoint: "ClaudeKernelFacet",
+                      identity: `kernel:claude:${name}`,
+                      tag: "actual-claude-kernel",
+                      calls: {
+                        identity: [
+                          {
+                            callId: "*",
+                            route: { method: "POST", path: "/claude/kernel/inspect" },
+                          },
+                        ],
+                        isolateNonceProbe: [
+                          {
+                            callId: "*",
+                            route: { method: "POST", path: "/claude/kernel/inspect" },
+                          },
+                        ],
+                      },
                     },
-                  },
-                  tail,
-                ).code,
+                    tail,
+                  ).code,
               ),
             // Each owner facet is its own isolate; without its tail a memory reset there is unattributable.
-            cli: (code) => owners.cli({ ...code, tails: [...(code.tails ?? []), tail] }),
-            computer: (code) => owners.computer({ ...code, tails: [...(code.tails ?? []), tail] }),
+            cli: (code) => owners.cli(async () => withTail(await code(), tail)),
+            computer: (code) => owners.computer(async () => withTail(await code(), tail)),
           });
           assertQualifierClaudeFacetConfiguration(prepared.code.env);
           const route = (path: string) => ({ method: "POST", path });
@@ -201,8 +216,12 @@ export function qualifierFacetLoader(
         return observed.code;
       });
     },
-    load: (code) => env.LOADER.load(code),
-  };
+    load: (code) => platform.load(code),
+  });
+}
+
+function withTail(code: WorkerLoaderWorkerCode, tail: Fetcher): WorkerLoaderWorkerCode {
+  return { ...code, tails: [...(code.tails ?? []), tail] };
 }
 
 export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {

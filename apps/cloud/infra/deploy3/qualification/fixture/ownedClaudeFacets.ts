@@ -4,14 +4,15 @@ import type { QualifierClaudeKernelPort } from "./claudeKernelProtocol.ts";
 import type { ComputerExecutionObject } from "../../../../src/computer/ComputerExecutionObject.ts";
 import type { ComputerExecutionConfiguration } from "../../../../src/computer/ComputerExecutionObject.ts";
 import type { ComputerProgramOwnerPort } from "../../../../src/kernel/KernelComputerAdmissionPort.ts";
+import type { ClaudeOwnerCodeFactory } from "../../../../src/harness/ClaudeProductOwners.ts";
 
 interface Owners {
   cli(
-    code: WorkerLoaderWorkerCode,
+    code: ClaudeOwnerCodeFactory,
   ): import("../../../../src/harness/ClaudeCliKernelPort.ts").ClaudeCliHost;
-  kernel(code: WorkerLoaderWorkerCode): QualifierClaudeKernelPort;
+  kernel(code: ClaudeOwnerCodeFactory): QualifierClaudeKernelPort;
   computer(
-    code: WorkerLoaderWorkerCode,
+    code: ClaudeOwnerCodeFactory,
   ): ComputerProgramOwnerPort & { configure(input: ComputerExecutionConfiguration): Promise<void> };
 }
 
@@ -32,11 +33,12 @@ export function ownedClaudeFacetWorker(
   function open<T extends Rpc.DurableObjectBranded>(
     role: string,
     entrypoint: string,
-    code: WorkerLoaderWorkerCode,
+    code: ClaudeOwnerCodeFactory,
   ) {
     if (closed) throw new Error("Claude owner construction was retired");
     const key = `${name}:${role}`;
-    const worker = loader.get(key, () => code);
+    // The factory, never its result, stays with the loader: this isolate keeps no owner code.
+    const worker = loader.get(key, code);
     let facetClass: ReturnType<typeof worker.getDurableObjectClass<T>> | undefined;
     try {
       const currentClass = worker.getDurableObjectClass<T>(entrypoint);

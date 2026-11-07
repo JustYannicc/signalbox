@@ -54,8 +54,8 @@ function fixture(failAbort = false, failClass = false) {
 it("retires both sibling owners exactly once with their host handle", async () => {
   const f = fixture();
   const host = ownedClaudeFacetWorker(f.ctx, f.loader, "host", async (owners) => {
-    owners.kernel(f.code);
-    owners.computer(f.code);
+    owners.kernel(() => f.code);
+    owners.computer(() => f.code);
     return f.code;
   });
   await f.callbacks.get("host")!();
@@ -81,8 +81,8 @@ it("retires both sibling owners exactly once with their host handle", async () =
 it("still deletes facets and releases every stub when abort fails", async () => {
   const f = fixture(true);
   const host = ownedClaudeFacetWorker(f.ctx, f.loader, "host", async (owners) => {
-    owners.kernel(f.code);
-    owners.computer(f.code);
+    owners.kernel(() => f.code);
+    owners.computer(() => f.code);
     return f.code;
   });
   await f.callbacks.get("host")!();
@@ -97,7 +97,7 @@ it("still deletes facets and releases every stub when abort fails", async () => 
 it("releases a worker whose class cannot be constructed", async () => {
   const f = fixture(false, true);
   const host = ownedClaudeFacetWorker(f.ctx, f.loader, "host", async (owners) => {
-    owners.kernel(f.code);
+    owners.kernel(() => f.code);
     return f.code;
   });
   await expect(f.callbacks.get("host")!()).rejects.toThrow("class construction failed");
@@ -113,7 +113,7 @@ it("rejects a late sibling construction after its host was retired", async () =>
   const host = ownedClaudeFacetWorker(f.ctx, f.loader, "host", async (owners) => {
     entered.resolve();
     await release.promise;
-    owners.kernel(f.code);
+    owners.kernel(() => f.code);
     return f.code;
   });
   const preparing = f.callbacks.get("host")!();
