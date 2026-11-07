@@ -1,5 +1,6 @@
 import { createNodeFs } from "../../isolate/NodeFs.ts";
 import type { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
+import { runKernelExecution } from "../../kernel/KernelExecution.ts";
 import type { ClaudeSdkFsReply } from "../ClaudeSdkHostProtocol.ts";
 import { serializeHarnessFailure } from "../Harness.ts";
 
@@ -115,7 +116,11 @@ export function createClaudeCliFiles(files: KernelFileSystem) {
               : { ...(typeof options === "object" && options !== null ? options : {}), signal };
         }
         signal?.throwIfAborted();
-        const value: unknown = await Reflect.apply(invoke, target, supplied);
+        // FileHandle methods without a signal parameter inherit this call's kernel cancellation.
+        const call = () => Reflect.apply(invoke, target, supplied);
+        const value: unknown = await (signal === undefined
+          ? call()
+          : runKernelExecution(signal, call));
         if (!match && (operation === "open" || operation === "opendir")) {
           if (typeof value !== "object" || value === null)
             throw new Error("SDK open returned no handle");
