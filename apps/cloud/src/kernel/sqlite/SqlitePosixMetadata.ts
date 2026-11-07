@@ -3,6 +3,15 @@ import type { Inode } from "../storage.ts";
 import { firstRow, StorageError } from "./SqliteDatabase.ts";
 import type { SqliteInodes } from "./SqliteInodes.ts";
 
+/** A `kernel_fs_posix` row, as `posix.get` reports it; ENOTSUP where an inode has none. */
+export function posixFromRow(row: Record<string, unknown> | undefined): PosixMetadata {
+  if (row === undefined || row.mode === null || row.mode === undefined)
+    throw new StorageError("ENOTSUP");
+  const metadata = { mode: row.mode, uid: row.uid, gid: row.gid };
+  if (!isPosixMetadata(metadata)) throw new StorageError("EIO");
+  return metadata;
+}
+
 export class SqlitePosixMetadata {
   private readonly inodes: SqliteInodes;
 
@@ -12,15 +21,14 @@ export class SqlitePosixMetadata {
 
   get(inode: Inode): PosixMetadata {
     this.inodes.stat(inode);
-    const row = firstRow(
-      this.inodes.storage.sql.exec(
-        "SELECT mode, uid, gid FROM kernel_fs_posix WHERE ino = ?",
-        inode.toString(),
+    return posixFromRow(
+      firstRow(
+        this.inodes.storage.sql.exec(
+          "SELECT mode, uid, gid FROM kernel_fs_posix WHERE ino = ?",
+          inode.toString(),
+        ),
       ),
     );
-    if (!row) throw new StorageError("ENOTSUP");
-    if (!isPosixMetadata(row)) throw new StorageError("EIO");
-    return { mode: row.mode, uid: row.uid, gid: row.gid };
   }
 
   initialize(inode: Inode, metadata: PosixMetadata): void {

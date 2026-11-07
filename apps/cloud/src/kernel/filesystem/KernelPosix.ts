@@ -134,16 +134,6 @@ export class KernelPosix {
     assertAccess(metadata, credentials, type, requested, effectiveIds);
   }
 
-  /** As `checkAccess`, for metadata already read. */
-  checkMetadataAccess(
-    metadata: PosixMetadata,
-    type: KernelStat["type"],
-    requested: number,
-    effectiveIds: boolean,
-  ): void {
-    assertAccess(metadata, this.#requireCredentials(), type, requested, effectiveIds);
-  }
-
   async checkAccessAsync(
     storage: WasiMountedStorage["storage"],
     inode: Inode,

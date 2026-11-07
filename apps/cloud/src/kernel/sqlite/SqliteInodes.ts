@@ -1,11 +1,32 @@
 import type { CreateOptions, DirectoryEntry, Inode, Stat, Times } from "../storage.ts";
 import { type FacetStorage, firstRow, StorageError } from "./SqliteDatabase.ts";
 
-const validName = (name: string) => {
+export const validName = (name: string) => {
   if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\0")) {
     throw new StorageError("EINVAL");
   }
 };
+
+export function fileType(value: unknown): Stat["type"] {
+  if (value !== "file" && value !== "directory" && value !== "symlink")
+    throw new StorageError("EIO");
+  return value;
+}
+
+/** A `kernel_fs_inode` row, as `stat` reports it. */
+export function statFromRow(row: Record<string, unknown>): Stat {
+  const type = fileType(row.type);
+  const nlink = Number(row.nlink);
+  if (!Number.isSafeInteger(nlink) || nlink < 0) throw new StorageError("EIO");
+  return {
+    type,
+    size: BigInt(String(row.size)),
+    nlink: BigInt(nlink),
+    atimeNs: BigInt(String(row.atime_ns)),
+    mtimeNs: BigInt(String(row.mtime_ns)),
+    ctimeNs: BigInt(String(row.ctime_ns)),
+  };
+}
 
 export class SqliteInodes {
   readonly root = 1n;
@@ -86,23 +107,7 @@ export class SqliteInodes {
       ),
     );
     if (!row) throw new StorageError("ENOENT");
-    const type = row.type;
-    const nlink = Number(row.nlink);
-    if (
-      (type !== "file" && type !== "directory" && type !== "symlink") ||
-      !Number.isSafeInteger(nlink) ||
-      nlink < 0
-    ) {
-      throw new StorageError("EIO");
-    }
-    return {
-      type,
-      size: BigInt(String(row.size)),
-      nlink: BigInt(nlink),
-      atimeNs: BigInt(String(row.atime_ns)),
-      mtimeNs: BigInt(String(row.mtime_ns)),
-      ctimeNs: BigInt(String(row.ctime_ns)),
-    };
+    return statFromRow(row);
   }
 
   readlink(inode: Inode): string {
@@ -118,12 +123,11 @@ export class SqliteInodes {
         "SELECT e.name, e.ino, i.type FROM kernel_fs_entry e JOIN kernel_fs_inode i ON i.ino = e.ino WHERE e.parent = ? ORDER BY e.name",
         inode.toString(),
       ),
-      (row) => {
-        const type = row.type;
-        if (type !== "file" && type !== "directory" && type !== "symlink")
-          throw new StorageError("EIO");
-        return { name: String(row.name), inode: BigInt(String(row.ino)), type };
-      },
+      (row) => ({
+        name: String(row.name),
+        inode: BigInt(String(row.ino)),
+        type: fileType(row.type),
+      }),
     );
   }
 

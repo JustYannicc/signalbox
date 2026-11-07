@@ -60,6 +60,8 @@ export function createTestFilesystem(
   return {
     filesystem,
     storage,
+    /** Computer's own storage, below the overlay. */
+    upper: inodes,
     persistenceRevision: () => inodes.changeGeneration(),
     fileChanges: (since: number) => inodes.changesSince?.(since),
     close() {
