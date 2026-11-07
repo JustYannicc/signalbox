@@ -120,6 +120,16 @@ describe.skipIf(!available)("hydrated paths through ProductComputer Bash and gre
       children: ["/bin/grep"],
     },
     {
+      script: "exec 7<CONTEXT.md; grep -n x input",
+      stdout: "1:# Context\n5:x control\n",
+      children: ["/bin/grep"],
+    },
+    {
+      script: "exec 7<CONTEXT.md; grep -n x /dev/fd/7",
+      stdout: "1:# Context\n5:x control\n",
+      children: ["/bin/grep"],
+    },
+    {
       script: "PWD=/ grep -n x CONTEXT.md",
       stdout: "1:# Context\n5:x control\n",
       children: ["/bin/grep"],
@@ -148,6 +158,7 @@ describe.skipIf(!available)("hydrated paths through ProductComputer Bash and gre
     });
     filesystem.mkdir("/work");
     filesystem.chdir("/work");
+    filesystem.symlink("/dev/fd/7", "input");
     const controller = new AbortController();
     const commands: { executable: string; cwd: string; argv: readonly string[] }[] = [];
     const machineSpawn = vi.fn(async () => {
