@@ -257,10 +257,10 @@ export class KernelFileSystem {
   }
 
   /**
-   * The whole tree, as lstat and readdir report it path by path, walked by inode for indexing it
-   * without resolving each path from the root. It reads one snapshot of storage where storage can
-   * take one of at most `maxEntries` names, and live storage otherwise. Undefined where the tree
-   * has more than one mount or a byte view; those callers index path by path.
+   * The whole tree, as lstat and readdir report it path by path, read by inode from one snapshot
+   * of storage, for indexing it without resolving each path from the root. Undefined where storage
+   * can't take a snapshot of at most `maxEntries` names, or the tree has more than one mount or a
+   * byte view; those callers index path by path, which also counts only names they reach.
    */
   metadataTree(maxEntries: number): KernelFileSystemTree | undefined {
     return this.#system(() => {
@@ -273,20 +273,18 @@ export class KernelFileSystem {
       try {
         snapshot = overlay.snapshot(maxEntries);
       } catch (error) {
-        // Names past the cap may be ones the walk never reaches; live reads count only those.
         if (
-          !(
-            typeof error === "object" &&
-            error !== null &&
-            "code" in error &&
-            error.code === "E2BIG"
-          )
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "E2BIG"
         )
-          throw error;
+          return undefined;
+        throw error;
       }
+      if (snapshot === undefined) return undefined;
       return new KernelFileSystemTree({
-        mount: snapshot === undefined ? mount : { ...mount, storage: snapshot },
-        snapshot: snapshot !== undefined,
+        mount: { ...mount, storage: snapshot },
         paths: this.#paths,
         perPath: {
           lstat: (path) => this.lstatAsync(path),

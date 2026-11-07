@@ -92,9 +92,9 @@ interface Entry {
 /** How the walk reads the tree: by inode, or path by path where it can't. */
 interface TreeSource<E extends Entry> {
   /**
-   * Whether the walk may stop between pages. A live read can find a directory unsearchable after
-   * the walk handed it out, and the directory is then marked with its denial where it stands, so
-   * only a snapshot, which can't change, is read a page per call. Live reads walk in one call.
+   * Whether the walk may stop between pages. Read path by path, a directory can turn out
+   * unsearchable after the walk handed it out, and is then marked with its denial where it
+   * stands, so only a snapshot, which can't change, is read a page per call.
    */
   readonly paged: boolean;
   run<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T>;
@@ -232,9 +232,9 @@ export class CliMetadataWalk<E extends Entry> {
 }
 
 /**
- * The walk for a filesystem: by inode where it can be, path by path where not. A snapshot holds
- * every name of Computer's storage; twice the index's own bound leaves room for names it never
- * reaches, and a larger tree is read live, still by inode.
+ * The walk for a filesystem: from one storage snapshot where it can be, path by path where not. A
+ * snapshot holds every name of Computer's storage; twice the index's own bound leaves room for
+ * names it never reaches, and a larger tree is read path by path, which counts only those.
  */
 export function createCliMetadataWalk(filesystem: KernelFileSystem, limit: number) {
   const tree = filesystem.metadataTree(limit * 2);
@@ -245,7 +245,7 @@ export function createCliMetadataWalk(filesystem: KernelFileSystem, limit: numbe
 
 function treeSource(tree: KernelFileSystemTree): TreeSource<KernelTreeEntry> {
   return {
-    paged: tree.snapshot,
+    paged: true,
     run: (signal, run) => tree.run(signal, run),
     root: () => tree.root(),
     readdir: (directory) => tree.readdir(directory),

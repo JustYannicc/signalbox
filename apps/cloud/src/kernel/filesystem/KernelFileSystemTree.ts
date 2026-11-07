@@ -21,15 +21,14 @@ export interface KernelTreePaths {
 }
 
 /**
- * The tree as `lstatAsync`, `readdirAsync` and `readlink` report it, walked by inode from the root
- * instead of resolving every path again: a child is the parent's own `lookup`, and each step after
- * is the path code's own, run on that inode. A caller walks from the root, so every directory it
- * reads was searchable all the way down. Paths the kernel synthesizes, devices and descriptor
- * aliases, still take the per-path calls.
+ * The tree as `lstatAsync`, `readdirAsync` and `readlink` report it, read by inode from one
+ * snapshot of storage instead of resolving every path again: a child is the parent's own `lookup`,
+ * and each step after is the path code's own, run on that inode. Only the parent's search is
+ * checked: a caller walks from the root, so each ancestor was searchable when the walk passed it,
+ * and a snapshot can't change since. Paths the kernel synthesizes, devices and descriptor aliases,
+ * still take the per-path calls.
  */
 export class KernelFileSystemTree {
-  /** Read from one snapshot of storage, which can't change while the tree is walked. */
-  readonly snapshot: boolean;
   readonly #mount: WasiMountedStorage;
   readonly #paths: KernelFileSystemPaths;
   readonly #perPath: KernelTreePaths;
@@ -37,12 +36,10 @@ export class KernelFileSystemTree {
 
   constructor(options: {
     readonly mount: WasiMountedStorage;
-    readonly snapshot: boolean;
     readonly paths: KernelFileSystemPaths;
     readonly perPath: KernelTreePaths;
     readonly run: <T>(signal: AbortSignal, run: () => Promise<T>) => Promise<T>;
   }) {
-    this.snapshot = options.snapshot;
     this.#mount = options.mount;
     this.#paths = options.paths;
     this.#perPath = options.perPath;

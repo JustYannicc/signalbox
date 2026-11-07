@@ -218,20 +218,24 @@ describe("the CLI's startup index", () => {
     }
   });
 
-  it("marks a directory that turns unsearchable partway, as the walk always did", async () => {
+  it("marks a directory whose ancestor turns unsearchable partway, on the walk past a snapshot's bound", async () => {
     let armed = false;
     const f = await fixture(128, ["/sync"], true, {
+      metadataLimit: 16,
       seed(fs, files) {
-        fs.mkdirSync("/d");
-        for (const name of ["a", "b", "c"]) fs.writeFileSync(`/d/${name}`, "");
-        // Read live, path by path: nothing holds the directory's mode still during the walk.
-        files.metadataTree = () => undefined;
+        // More names than a snapshot of a 16-entry index holds, out of the CLI's sight, so the
+        // index is read live.
+        fs.mkdirSync("/home/u/shut", { recursive: true });
+        for (let file = 0; file < 40; file++) fs.writeFileSync(`/home/u/shut/f${file}`, "");
+        fs.chmodSync("/home/u/shut", 0o000);
+        fs.mkdirSync("/a/b", { recursive: true });
+        for (const name of ["one", "two"]) fs.writeFileSync(`/a/b/${name}`, "");
         const lstat = files.lstatAsync.bind(files);
         files.lstatAsync = async (path, signal) => {
           const stat = await lstat(path, signal);
-          if (armed && path === "/d/a") {
+          if (armed && path === "/a/b/one") {
             armed = false;
-            fs.chmodSync("/d", 0o644);
+            fs.chmodSync("/a", 0o644);
           }
           return stat;
         };
@@ -241,13 +245,47 @@ describe("the CLI's startup index", () => {
       armed = true;
       const { entries } = await index(f);
       const paths = entries.map(({ path }) => path);
-      expect(entries.find(({ path }) => path === "/d")).toMatchObject({
-        children: ["a", "b", "c"],
+      expect(armed).toBe(false);
+      // A live lstat of /a/b/two now fails in /a, so /a/b keeps its names and a search denial.
+      expect(entries.find(({ path }) => path === "/a/b")).toMatchObject({
+        children: ["one", "two"],
         directoryDenial: { search: "EACCES" },
       });
-      expect(paths).toContain("/d/a");
-      expect(paths).not.toContain("/d/b");
+      expect(paths).toContain("/a/b/one");
+      expect(paths).not.toContain("/a/b/two");
     } finally {
+      await f.close();
+    }
+  });
+
+  it("indexes a machine file as the snapshot saw it, though an open file copies it up meanwhile", async () => {
+    const f = await fixture(128, ["/sync"], false, {
+      metadataLimit: 8192,
+      seed(fs, files) {
+        installMachineTree(files, [{ path: "/m/a" }]);
+        // Computer's own names come first in the root, so the machine file lands on a later page.
+        fs.mkdirSync("/bulk");
+        for (let file = 0; file < 3000; file++) fs.writeFileSync(`/bulk/f${file}`, "");
+      },
+    });
+    const reader = f.canonical.openSync("/m/a", "r");
+    try {
+      const first = await f.kernel.metadata(0);
+      expect(first.entries.map(({ path }) => path)).not.toContain("/m/a");
+      // Written while a descriptor holds the machine file, it is copied up to a new inode.
+      f.canonical.writeFileSync("/m/a", "rewritten");
+      const rest: CliFileMetadata[] = [];
+      for (let cursor = first.next; cursor !== null;) {
+        const page = await f.kernel.metadata(cursor, first.revision);
+        rest.push(...page.entries);
+        cursor = page.next;
+      }
+      expect(rest.find(({ path }) => path === "/m/a")?.stat).toMatchObject({
+        type: "file",
+        size: 0n,
+      });
+    } finally {
+      f.canonical.closeSync(reader);
       await f.close();
     }
   });

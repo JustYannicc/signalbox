@@ -164,13 +164,15 @@ export class KernelLowerFileSystemStorage
     const upper = this.#upper.snapshot(maxEntries);
     const twin = new KernelLowerFileSystemStorage(upper);
     twin.#lower = this.#lower;
-    // The twin's own copy-ups would write the snapshot and fail; this overlay's show through.
+    // The twin's own copy-ups would write the snapshot and fail. This overlay's are read at the
+    // same instant as the snapshot, so every upper inode they name is one it holds; a copy-up
+    // after it would name an inode the snapshot never saw.
     twin.#files = new KernelLowerFileSystemFileLayer(
       upper,
       twin.#overlayUpper,
       twin.#directories,
       () => twin.#sourceIndex,
-      (inode) => this.#files.upperInodeForLower(inode),
+      this.#files.copiedUp(),
     );
     return twin;
   }
