@@ -319,6 +319,13 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
   async signalProcess(selector: number, signal: number) {
     this.#lifetime.throwIfAborted();
     const result = this.#resources.processes.signalPid(undefined, selector, signal);
+    // The guest already got ok when it queued delivery. Native Node throws ESRCH synchronously,
+    // where the CLI catches it; a target gone by delivery must not poison the filesystem barrier.
+    if (
+      result.status === "error" &&
+      (result.error.code === "NOT_FOUND" || result.error.code === "EXPIRED")
+    )
+      return;
     if (result.status !== "ok") throw nodeProcessSignalError(result);
   }
   async processState(cwd: string, umask: number | undefined) {
