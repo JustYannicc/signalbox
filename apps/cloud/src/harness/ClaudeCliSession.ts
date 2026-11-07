@@ -249,6 +249,7 @@ export function createClaudeCliFacetClass<Env>(
                   signal?.removeEventListener("abort", abort);
                 }
               },
+              cancelOperations: backend.cancelOperations,
               close,
             },
           },

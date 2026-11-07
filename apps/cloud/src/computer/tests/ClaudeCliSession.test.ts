@@ -136,6 +136,38 @@ async function fixture(options: Parameters<typeof cliFileBackendFixture>[3] = {}
 }
 
 describe("Claude CLI session close", () => {
+  it("cancels a blocked pipe read while committing queued writes on close", async () => {
+    const entered = Promise.withResolvers<string>();
+    const f = await fixture({
+      syscall(request, invoke) {
+        const pending = invoke();
+        if (request.name === "fd_read" && Number(request.args[0]) === 0)
+          entered.resolve(request.operationId!);
+        return pending;
+      },
+    });
+    const reading = new Promise<void>((resolve, reject) => {
+      f.fs.read(0, new Uint8Array(1), 0, 1, null, (error) => {
+        if (error === null) resolve();
+        else reject(error);
+      });
+    });
+    const outcome = reading.then(
+      () => ({ status: "fulfilled" as const }),
+      (reason: unknown) => ({ status: "rejected" as const, reason }),
+    );
+    const id = await entered.promise;
+    // Rescue the original deadlock if the regression fails, before fixture teardown joins it.
+    onTestFinished(() => f.kernel.cancel(id, new Error("Test read cleanup")));
+    f.fs.writeFileSync("/sync", "committed while cancelling read");
+    const closing = f.cli.dispose();
+    await expect(f.fs.promises.readFile("/async")).rejects.toThrow("Claude CLI owner closed");
+    await expect(closing).resolves.toBeUndefined();
+    expect(await outcome).toMatchObject({ status: "rejected", reason: expect.any(Error) });
+    expect(f.canonical.readFileSync("/sync", "utf8")).toBe("committed while cancelling read");
+    expect(f.signal.aborted).toBe(true);
+  });
+
   it("closes a clean session without reporting its owner abort as a filesystem failure", async () => {
     const f = await fixture();
     await f.fs.promises.readFile("/sync", "utf8");

@@ -77,6 +77,12 @@ export async function createCliFileBackend(
     }
   };
   const files = new CliFileWorkingSet(input.workingSet);
+  const stopped = new AbortController();
+  const callsSignal = AbortSignal.any([signal, stopped.signal]);
+  const operationSignal = (userSignal?: AbortSignal) =>
+    userSignal === undefined ? callsSignal : AbortSignal.any([callsSignal, userSignal]);
+  const cancelOperations = (reason: unknown) => stopped.abort(reason);
+  // Queued writes and descriptor cleanup keep the owner lifetime, independent of cancelled calls.
   const remote = createNodeFsSyscallClient({
     syscalls: kernel,
     rootDescriptor: input.rootDescriptor,
@@ -236,11 +242,13 @@ export async function createCliFileBackend(
     args: NodeFsArguments<K>,
     userSignal?: AbortSignal,
   ): Promise<NodeFsResult<K>> => {
+    const callSignal = operationSignal(userSignal);
     const mutation =
       mutating.has(name) ||
       (name === "open" &&
         (Number(args[1]) & (KernelOpenFlags.O_CREAT | KernelOpenFlags.O_TRUNC)) !== 0);
     const operation = (async () => {
+      callSignal.throwIfAborted();
       if (
         [
           "close",
@@ -257,6 +265,7 @@ export async function createCliFileBackend(
       )
         throw kernelError("EBADF");
       await barrier();
+      callSignal.throwIfAborted();
       const values: unknown[] = [...args];
       const pathIndices =
         name === "symlink"
@@ -293,12 +302,12 @@ export async function createCliFileBackend(
         return undefined as NodeFsResult<K>;
       }
       try {
-        const result = await remote.call(name, values as NodeFsArguments<K>, userSignal);
+        const result = await remote.call(name, values as NodeFsArguments<K>, callSignal);
         if (name === "open") {
           const fd = Number(result);
           try {
-            const stat = await remote.fstat(fd, userSignal);
-            userSignal?.throwIfAborted();
+            const stat = await remote.fstat(fd, callSignal);
+            callSignal.throwIfAborted();
             views.observeOpen(fd, String(values[0]), Number(values[1]), stat);
           } catch (cause) {
             try {
@@ -314,7 +323,7 @@ export async function createCliFileBackend(
         else if ((name === "read" || name === "write") && values[2] === null)
           views.observeOffset(
             Number(values[0]),
-            await remote.position(Number(values[0]), userSignal),
+            await remote.position(Number(values[0]), callSignal),
           );
         return result;
       } finally {
@@ -347,14 +356,16 @@ export async function createCliFileBackend(
     // Computer synthesizes /proc and /dev, so the view never indexed them.
     if (!viewedMetadata.has(name) || path === undefined || /^\/(?:proc|dev)(?:\/|$)/.test(path))
       return remoteRun(name, args, userSignal);
+    const callSignal = operationSignal(userSignal);
     return (async () => {
+      callSignal.throwIfAborted();
       // One barrier a second covers every call, so changes nobody bracketed still show. It
       // waits for a round only when Computer moved; otherwise the view is already current.
       if (performance.now() - checkedAt >= METADATA_FRESH_MS)
         await (confirming ??= barrier().finally(() => {
           confirming = undefined;
         }));
-      userSignal?.throwIfAborted();
+      callSignal.throwIfAborted();
       // A child is writing what Computer can't list yet, so only Computer knows until it ends.
       if (!behind)
         try {
@@ -362,11 +373,11 @@ export async function createCliFileBackend(
         } catch (cause) {
           // A listing the index never read is Computer's to answer, and its round may index it.
           if (!(cause instanceof CliViewMiss)) throw cause;
-          return remoteRun(name, args, userSignal);
+          return remoteRun(name, args, callSignal);
         }
       // One call: the barrier above already ran this second, and only the CLI's writes must land.
       await files.writes.flush();
-      return remote.call(name, [path, ...args.slice(1)] as NodeFsArguments<K>, userSignal);
+      return remote.call(name, [path, ...args.slice(1)] as NodeFsArguments<K>, callSignal);
     })();
   };
   await fileSync.index();
@@ -409,7 +420,7 @@ export async function createCliFileBackend(
       return policy;
     },
     descriptors: { get: (fd) => ({ offset: views.get(fd).offset }) },
-    descriptorOffset: (fd, userSignal) => remote.position(fd, userSignal),
+    descriptorOffset: (fd, userSignal) => remote.position(fd, operationSignal(userSignal)),
     changeGeneration: () => files.revision,
     resolvesThroughDescriptors: (path) =>
       /^\/(?:proc\/(?:self|\d+)\/fd|dev\/fd)\//.test(paths.absolute(path)),
@@ -536,6 +547,7 @@ export async function createCliFileBackend(
   disposals.add(stopWatching);
   return {
     backend,
+    cancelOperations,
     commit,
     barrier,
     beforeRemote,
@@ -547,9 +559,10 @@ export async function createCliFileBackend(
      * own copy, which a hold keeps open in Computer, so this skips the CLI's descriptor check.
      */
     async writeDescriptor(fd: number, bytes: Uint8Array) {
+      callsSignal.throwIfAborted();
       await barrier();
       for (let written = 0; written < bytes.byteLength;) {
-        const count = await remote.write(fd, bytes.subarray(written), null);
+        const count = await remote.write(fd, bytes.subarray(written), null, callsSignal);
         if (count === 0) throw kernelError("EIO");
         written += count;
       }
@@ -560,6 +573,7 @@ export async function createCliFileBackend(
     },
     refresh: barrier,
     async close() {
+      cancelOperations(new Error("CLI filesystem closed"));
       const failures: unknown[] = [];
       for (const dispose of disposals)
         try {

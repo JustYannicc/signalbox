@@ -23,6 +23,7 @@ export interface ClaudeCliProcessOptions extends Omit<NodeHarnessBaseInput, "sig
       args: ReadonlyArray<unknown>,
       signal?: AbortSignal,
     ): Promise<import("./ClaudeSdkHostProtocol.ts").ClaudeSdkFsReply>;
+    cancelOperations?(reason: unknown): void;
     close(): Promise<void>;
   };
 }
@@ -253,6 +254,8 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
       const reason = new Error("Claude CLI owner closed");
       this.#launch.reject(reason);
       try {
+        for (const controller of this.#io.values()) controller.abort(reason);
+        this.#files.cancelOperations?.(reason);
         // Stop the producer, then commit queued writes and close descriptors while Computer is live.
         const settled = await Promise.allSettled([this.#process.dispose()]);
         settled.push(...(await Promise.allSettled([this.#files.close()])));
