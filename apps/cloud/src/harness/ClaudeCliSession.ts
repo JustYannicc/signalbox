@@ -4,8 +4,8 @@ import { readClaudeKernelRelease } from "./ClaudeKernelSeed.ts";
 import { ClaudeCliProcess } from "./ClaudeCliProcess.ts";
 import type { ClaudeCliHost, ClaudeCliInitialization } from "./ClaudeCliKernelPort.ts";
 import type { NodeHarnessBaseInput, NodeHarnessStdio } from "./NodeHarnessProcess.ts";
+import { launchPreparedNodeHarnessProcess } from "./NodeHarnessLaunch.ts";
 import type { NodeFsBackend } from "../isolate/NodeFsBackend.ts";
-import { launchPreparedNodeHarnessProcess } from "./node/lifetime.ts";
 import { remoteCliRuntime } from "./cliProcess/Runtime.ts";
 import { createRemoteChildren } from "./cliProcess/Children.ts";
 import { createCliFileBackend } from "./ClaudeCliFileSystem.ts";
@@ -249,6 +249,7 @@ export function createClaudeCliFacetClass<Env>(
                   signal?.removeEventListener("abort", abort);
                 }
               },
+              cancelOperations: backend.cancelOperations,
               close,
             },
           },
