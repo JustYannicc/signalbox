@@ -4,7 +4,10 @@ import {
   materializeHarnessProcessModules,
   preparedReleaseAsset,
 } from "../../harness/HarnessProcessPlacement.ts";
-import { serializeHarnessReleaseArtifactManifest } from "../HarnessReleaseArtifact.ts";
+import {
+  openHarnessReleaseArtifact,
+  serializeHarnessReleaseArtifactManifest,
+} from "../HarnessReleaseArtifact.ts";
 import {
   createHarnessArtifactAssetSource,
   harnessArtifactKey,
@@ -90,6 +93,31 @@ describe("deployed release asset source", () => {
     await expect(source.read(f.reference, "codex/missing.js")).rejects.toThrow(
       "HARNESS_ARTIFACT_FILE_MISSING",
     );
+  });
+
+  it("reads each manifest once: the loader's open reuses the index check's verified copy", async () => {
+    const f = await fixture();
+    const fetched: string[] = [];
+    const binding = {
+      fetch: (request: Request) => {
+        fetched.push(decodeURIComponent(new URL(request.url).pathname));
+        return f.binding.fetch(request);
+      },
+    };
+    const source = createHarnessArtifactAssetSource(binding, "alpha", f.index);
+    const artifact = await openHarnessReleaseArtifact(
+      {
+        artifactRef: f.reference,
+        artifactHash: f.reference.slice("sha256:".length),
+        sourceIdentity: f.index.sourceIdentity,
+      },
+      source,
+    );
+    expect(artifact.manifest.harness).toBe("codex");
+    expect(await source.read(f.reference, "codex/main.js")).toEqual(f.bytes);
+    const manifests = fetched.filter((path) => path.endsWith("manifest.json"));
+    expect(manifests).toHaveLength(2);
+    expect(new Set(manifests).size).toBe(2);
   });
 
   it("uses the shared product materializer to reject wrong whole-file pins before returning module code", async () => {

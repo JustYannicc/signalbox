@@ -81,6 +81,8 @@ export const createHarnessArtifactAssetSource = (
   const raw: HarnessReleaseArtifactSource = {
     read: async (reference, path) => readChunkedAsset(binding, selected(reference, path)),
   };
+  // Manifests the index check read and verified; the loader's own open is served from them.
+  const manifests = new Map<string, Uint8Array>();
   let verified: Promise<void> | undefined;
   const verifyIndex = () =>
     (verified ??= (async () => {
@@ -91,7 +93,13 @@ export const createHarnessArtifactAssetSource = (
           artifactHash: hash,
           sourceIdentity: index.sourceIdentity,
         },
-        raw,
+        {
+          read: async (reference, path) => {
+            const bytes = await raw.read(reference, path);
+            manifests.set(path, bytes.slice());
+            return bytes;
+          },
+        },
       );
       const expected = {
         ...artifact.manifest.files,
@@ -109,11 +117,19 @@ export const createHarnessArtifactAssetSource = (
     read: async (reference, path) => {
       selected(reference, path);
       await verifyIndex();
-      return raw.read(reference, path);
+      return manifests.get(path)?.slice() ?? raw.read(reference, path);
     },
     readRange: async (reference, path, offset, length) => {
       const file = selected(reference, path);
       await verifyIndex();
+      const manifest = manifests.get(path);
+      if (
+        manifest !== undefined &&
+        offset >= 0 &&
+        length >= 0 &&
+        offset + length <= manifest.length
+      )
+        return manifest.slice(offset, offset + length);
       return readChunkedAssetRange(binding, file, offset, length);
     },
   };

@@ -9,6 +9,7 @@ it.each([
   "no-machine",
   "failed-metadata",
   "cancel-child-leases",
+  "verified-release",
 ])("keeps the product owners correct through %s", async (mode) => {
   const worker = new NodeWorkerThreads.Worker(
     new URL("./productHost/splitWorker.ts", import.meta.url),

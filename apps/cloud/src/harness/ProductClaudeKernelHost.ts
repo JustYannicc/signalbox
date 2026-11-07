@@ -16,7 +16,12 @@ import type { MachineProgramInventory } from "../computer/MachineProgramInventor
 import type { HarnessContinuationPublisher } from "./HarnessContinuations.ts";
 import type { HarnessReleaseArtifact } from "../harnessReleases/HarnessReleaseLedger.ts";
 import type { ConfiguredHarnessHook } from "../hooks/HarnessHookSettings.ts";
-import { loadHarnessRelease, type LoadHarnessReleaseOptions } from "./HarnessReleaseLoader.ts";
+import {
+  loadHarnessRelease,
+  reusableHarnessRelease,
+  type LoadHarnessReleaseOptions,
+  type VerifiedHarnessRelease,
+} from "./HarnessReleaseLoader.ts";
 import {
   selectProductClaudeHostRelease,
   type ProductClaudeReleaseVariants,
@@ -41,6 +46,8 @@ export interface ProductClaudeKernelHostOptions<G> extends Pick<
   "threadId" | "modelTransport" | "hooks" | "executor" | "turnGrantSource"
 > {
   readonly release: LoadHarnessReleaseOptions;
+  /** The release its machine already verified; the host reads only a different selection. */
+  readonly verifiedRelease?: VerifiedHarnessRelease;
   readonly releaseVariants: ProductClaudeReleaseVariants;
   readonly processResumeArtifact?: HarnessReleaseArtifact;
   readonly settingsHooks?: readonly ConfiguredHarnessHook[];
@@ -99,9 +106,11 @@ export const createProductClaudeKernelHost = <G>(
             cause,
           }),
       });
-      const loaded = yield* attempt("Claude product release could not be verified.", () =>
-        loadHarnessRelease(selected.release),
-      );
+      const loaded =
+        reusableHarnessRelease(options.verifiedRelease, selected.release) ??
+        (yield* attempt("Claude product release could not be verified.", () =>
+          loadHarnessRelease(selected.release),
+        ));
       const catalog = yield* attempt("Claude kernel seed catalog is invalid.", () =>
         createSeedCatalog(loaded, options.programs.seed, options.files, {
           artifact: selected.release.identity,
