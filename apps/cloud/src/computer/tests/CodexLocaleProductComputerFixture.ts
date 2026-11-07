@@ -30,6 +30,7 @@ import { createChildGit } from "../ChildGit.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import type { KernelCommandForwarder } from "../../kernel/KernelCommandForwarder.ts";
 import type { MachineProgramInventory } from "../MachineProgramInventory.ts";
+import type { MachineFilesPort } from "../MachineFilesPort.ts";
 import { emptyMachineFilesFixture, machineInventoryFixture } from "../machineInventoryTesting.ts";
 import { sqliteFixture } from "./helpers/sqliteFixture.ts";
 
@@ -127,6 +128,7 @@ export function createCodexLocaleProductComputer(
     readonly file?: KernelPosixMetadata;
     readonly machineInventory?: MachineProgramInventory;
     readonly machine?: KernelCommandForwarder;
+    readonly machineFiles?: MachineFilesPort;
     readonly orderedMachineRules?: ProductComputerOptions["orderedMachineRules"];
   } = {},
 ) {
@@ -297,7 +299,7 @@ export function createCodexLocaleProductComputer(
     machineInventory: options.machineInventory ?? machineInventoryFixture(),
     machine: () => ({
       ...machine,
-      files: emptyMachineFilesFixture(),
+      files: options.machineFiles ?? emptyMachineFilesFixture(),
     }),
     ...(options.orderedMachineRules === undefined
       ? {}

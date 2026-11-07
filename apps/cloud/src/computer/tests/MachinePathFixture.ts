@@ -242,6 +242,7 @@ export function machinePathFixture(
     async spawn(command, signal) {
       machineCalls.push(structuredClone(command));
       if (options.spawn !== undefined) return options.spawn(command, signal);
+      await files.markExecuted(files.current().generation!);
       return recordingChild();
     },
   };

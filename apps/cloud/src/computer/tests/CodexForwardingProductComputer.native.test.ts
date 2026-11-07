@@ -5,6 +5,7 @@ import { createNodeComputerChildProcess } from "../../isolate/NodeComputerProces
 import type { NodeChildProcess } from "../../isolate/NodeChildProcess.ts";
 import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
 import { openExecConnection } from "./CodexExecConnectionFixture.ts";
+import { emptyMachineFilesFixture } from "../machineInventoryTesting.ts";
 import {
   CODEX_UNIFIED_EXEC_ENV,
   createCodexLocaleProductComputer,
@@ -98,26 +99,31 @@ describe.skipIf(programs === undefined)(
         },
       ])("forwards $command without inheriting the engine's connection", async (testCase) => {
         if (programs === undefined) throw new Error("Pinned programs are unavailable");
-        const receipt = vi.fn(async () => ({
-          stdin: new WritableStream<Uint8Array>(),
-          stdout: new ReadableStream<Uint8Array>({
-            start(stream) {
-              stream.enqueue(new TextEncoder().encode("MACHINE_ROUTE_STDOUT_1070\n"));
-              stream.close();
-            },
-          }),
-          stderr: new ReadableStream<Uint8Array>({
-            start(stream) {
-              stream.enqueue(new TextEncoder().encode("MACHINE_ROUTE_STDERR_1070\n"));
-              stream.close();
-            },
-          }),
-          exited: Promise.resolve(exited(23)),
-          signal: async () => kernelOk(undefined),
-          dispose: async () => {},
-        }));
+        const machineFiles = emptyMachineFilesFixture();
+        const receipt = vi.fn(async () => {
+          await machineFiles.markExecuted(1);
+          return {
+            stdin: new WritableStream<Uint8Array>(),
+            stdout: new ReadableStream<Uint8Array>({
+              start(stream) {
+                stream.enqueue(new TextEncoder().encode("MACHINE_ROUTE_STDOUT_1070\n"));
+                stream.close();
+              },
+            }),
+            stderr: new ReadableStream<Uint8Array>({
+              start(stream) {
+                stream.enqueue(new TextEncoder().encode("MACHINE_ROUTE_STDERR_1070\n"));
+                stream.close();
+              },
+            }),
+            exited: Promise.resolve(exited(23)),
+            signal: async () => kernelOk(undefined),
+            dispose: async () => {},
+          };
+        });
         const fixture = createCodexLocaleProductComputer(programs, {
           machine: { spawn: receipt },
+          machineFiles,
           orderedMachineRules: [
             { id: "fetch-on-machine", executable: "/usr/bin/git", argvPrefix: ["fetch"] },
           ],

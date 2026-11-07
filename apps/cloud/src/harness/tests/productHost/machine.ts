@@ -29,6 +29,7 @@ export function machineFixture(scenario: Scenario, assertFilesLive: () => void) 
       requests.push(command.executable);
       NodeAssert.equal(command.executable, "/usr/bin/machine-tool");
       NodeAssert.deepEqual(command.argv, ["/usr/bin/machine-tool", "--recorded"]);
+      await port.files.markExecuted(1);
       const exited = Promise.withResolvers<KernelCommandExit>();
       const stop = () => {
         cancelled.resolve();

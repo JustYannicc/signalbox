@@ -3,6 +3,7 @@ import { kernelOk } from "../../kernel/KernelAbi.ts";
 import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
 import type { AgentOsSpawnRequest } from "../../kernel/AgentOsProcessWire.ts";
 import { openExecConnection } from "./CodexExecConnectionFixture.ts";
+import { emptyMachineFilesFixture } from "../machineInventoryTesting.ts";
 import {
   CODEX_UNIFIED_EXEC_ENV,
   createCodexLocaleProductComputer,
@@ -16,15 +17,22 @@ const exited = (exitCode = 0) => ({ exitCode, signal: 0, coreDumped: false });
 describe.skipIf(programs === undefined)("Codex engine POSIX spawn", () => {
   it("forwards grep without inheriting the live engine connection", async () => {
     if (programs === undefined) throw new Error("Pinned programs are unavailable");
-    const receipt = vi.fn(async () => ({
-      stdin: new WritableStream<Uint8Array>(),
-      stdout: new ReadableStream<Uint8Array>({ start: (stream) => stream.close() }),
-      stderr: new ReadableStream<Uint8Array>({ start: (stream) => stream.close() }),
-      exited: Promise.resolve(exited(23)),
-      signal: async () => kernelOk(undefined),
-      dispose: async () => {},
-    }));
-    const fixture = createCodexLocaleProductComputer(programs, { machine: { spawn: receipt } });
+    const machineFiles = emptyMachineFilesFixture();
+    const receipt = vi.fn(async () => {
+      await machineFiles.markExecuted(1);
+      return {
+        stdin: new WritableStream<Uint8Array>(),
+        stdout: new ReadableStream<Uint8Array>({ start: (stream) => stream.close() }),
+        stderr: new ReadableStream<Uint8Array>({ start: (stream) => stream.close() }),
+        exited: Promise.resolve(exited(23)),
+        signal: async () => kernelOk(undefined),
+        dispose: async () => {},
+      };
+    });
+    const fixture = createCodexLocaleProductComputer(programs, {
+      machine: { spawn: receipt },
+      machineFiles,
+    });
     const parentDone = Promise.withResolvers<ReturnType<typeof exited>>();
     const parent = fixture.computer.processes.spawn(
       undefined,
