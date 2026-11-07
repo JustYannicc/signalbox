@@ -13,6 +13,7 @@ import {
   type WasiDescriptor,
 } from "../wasi/internal_wasi_descriptors.ts";
 import type {
+  WasiMountedStorage,
   WasiPathLookup,
   WasiResolvedParent,
   WasiResolvedPath,
@@ -32,6 +33,9 @@ import { kernelLowerNativeMetadata } from "../KernelLowerFileSystemStorage.ts";
 import { deviceInfoForDescriptor, deviceStat, virtualDevice } from "./KernelVirtualDevices.ts";
 
 const encoder = new TextEncoder();
+
+/** An inode a path resolved to: all the post-resolution steps read. */
+export type ResolvedInode = Pick<WasiResolvedPath, "mount" | "inode" | "stat">;
 
 export class KernelFileSystemPaths {
   readonly resolver: KernelPathResolver;
@@ -186,10 +190,39 @@ export class KernelFileSystemPaths {
       const alias = descriptorPathAlias(path);
       if (alias !== undefined) return this.resolver.descriptorPath(this.#getAlias(alias));
       if (virtualDevice(path) !== undefined) throw kernelError("EINVAL");
-      const resolved = this.resolver.resolve(path, { followFinal: false });
-      if (resolved.stat.type !== "symlink") throw kernelError("EINVAL");
-      return runKernelSync(resolved.mount.storage.readlink(resolved.inode));
+      return runKernelSync(
+        this.#readlinkResolved(this.resolver.resolve(path, { followFinal: false })),
+      );
     });
+  }
+
+  /**
+   * The steps `lstatAsync`, `readdirAsync`, `readlink` and path search take once a path has
+   * resolved to an inode, for a caller that walks a tree by inode instead of resolving each path.
+   */
+  statResolvedAsync(resolved: ResolvedInode): Promise<KernelStat> {
+    return withKernelErrorsAsync(() =>
+      this.resolver.runAsync(this.#readStat(resolved, undefined, true)),
+    );
+  }
+
+  listDirectoryAsync(resolved: ResolvedInode): Promise<string[]> {
+    return withKernelErrorsAsync(() => this.resolver.runAsync(this.#listDirectory(resolved, true)));
+  }
+
+  readlinkResolvedAsync(resolved: ResolvedInode): Promise<string> {
+    return withKernelErrorsAsync(async () => this.#readlinkResolved(resolved));
+  }
+
+  searchDirectoryAsync(mount: WasiMountedStorage, directory: Inode): Promise<void> {
+    return withKernelErrorsAsync(async () => {
+      await this.#searchCheckAsync(true)?.(mount, directory);
+    });
+  }
+
+  #readlinkResolved(resolved: ResolvedInode) {
+    if (resolved.stat.type !== "symlink") throw kernelError("EINVAL");
+    return resolved.mount.storage.readlink(resolved.inode);
   }
 
   createInode(
@@ -451,6 +484,10 @@ export class KernelFileSystemPaths {
   *#readDirectory(path: string, asynchronous: boolean): WasiCall<string[]> {
     if (virtualDevice(path) !== undefined) throw kernelError("ENOTDIR");
     const resolved = yield* this.#resolveReadPath(path, true, asynchronous);
+    return yield* this.#listDirectory(resolved, asynchronous);
+  }
+
+  *#listDirectory(resolved: ResolvedInode, asynchronous: boolean): WasiCall<string[]> {
     if (resolved.stat.type !== "directory") throw kernelError("ENOTDIR");
     if (this.#posix.credentials !== undefined) {
       if (asynchronous)
@@ -487,7 +524,7 @@ export class KernelFileSystemPaths {
   }
 
   *#readStat(
-    resolved: WasiResolvedPath,
+    resolved: ResolvedInode,
     descriptor: WasiDescriptor | undefined,
     asynchronous: boolean,
   ): WasiCall<KernelStat> {
@@ -506,7 +543,7 @@ export class KernelFileSystemPaths {
   }
 
   #statResolvedWithMetadata(
-    resolved: WasiResolvedPath,
+    resolved: ResolvedInode,
     descriptor: WasiDescriptor | undefined,
     posix: PosixMetadata | undefined,
   ): KernelStat {

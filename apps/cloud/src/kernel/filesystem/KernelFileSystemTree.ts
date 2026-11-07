@@ -1,20 +1,19 @@
-import type { KernelLowerFileSystemTree, KernelTreeNode } from "../KernelLowerFileSystemTree.ts";
 import { childPath } from "../KernelLowerFileSystemSourceIndex.ts";
-import type { PosixMetadata } from "../PosixStorage.ts";
-import { kernelError } from "./KernelFileSystemErrors.ts";
+import type { Inode } from "../storage.ts";
+import type { WasiMountedStorage } from "../wasi/internal_wasi_paths.ts";
+import type { KernelFileSystemPaths, ResolvedInode } from "./KernelFileSystemPaths.ts";
 import type { KernelStat } from "./KernelFileSystemTypes.ts";
-import type { KernelPosix } from "./KernelPosix.ts";
-import { descriptorPathSuffix, posixPathAlias } from "./KernelPathAliases.ts";
+import { resolvesThroughDescriptors } from "./KernelPathAliases.ts";
 import { virtualDevice } from "./KernelVirtualDevices.ts";
 
 export interface KernelTreeEntry {
   readonly path: string;
   readonly stat: KernelStat;
   /** Absent for a path the kernel synthesizes, which only its per-path calls answer. */
-  readonly node?: KernelTreeNode;
+  readonly resolved?: ResolvedInode;
 }
 
-/** The per-path calls this tree stands in for. */
+/** The per-path calls the tree stands in for. */
 export interface KernelTreePaths {
   lstat(path: string): Promise<KernelStat>;
   readdir(path: string): Promise<string[]>;
@@ -22,29 +21,28 @@ export interface KernelTreePaths {
 }
 
 /**
- * The tree as `lstatAsync`, `readdirAsync` and `readlink` report it, read from one snapshot of
- * storage: the same denials, inodes and metadata, without resolving every path from the root.
- * A caller walks it from the root, so each directory it reads was searchable all the way down.
- * Paths the kernel synthesizes, devices and descriptor aliases, still take the per-path calls.
+ * The tree as `lstatAsync`, `readdirAsync` and `readlink` report it, read by inode from one
+ * snapshot of storage instead of resolving every path again: a child is the parent's own `lookup`,
+ * and each step after is the path code's own, run on that inode. Only the parent's search is
+ * checked: a caller walks from the root, so each ancestor was searchable when the walk passed it,
+ * and a snapshot can't change since. Paths the kernel synthesizes, devices and descriptor aliases,
+ * still take the per-path calls.
  */
 export class KernelFileSystemTree {
-  readonly #tree: KernelLowerFileSystemTree;
-  readonly #device: bigint;
-  readonly #posix: KernelPosix;
-  readonly #paths: KernelTreePaths;
+  readonly #mount: WasiMountedStorage;
+  readonly #paths: KernelFileSystemPaths;
+  readonly #perPath: KernelTreePaths;
   readonly #run: <T>(signal: AbortSignal, run: () => Promise<T>) => Promise<T>;
 
   constructor(options: {
-    readonly tree: KernelLowerFileSystemTree;
-    readonly device: bigint;
-    readonly posix: KernelPosix;
-    readonly paths: KernelTreePaths;
+    readonly mount: WasiMountedStorage;
+    readonly paths: KernelFileSystemPaths;
+    readonly perPath: KernelTreePaths;
     readonly run: <T>(signal: AbortSignal, run: () => Promise<T>) => Promise<T>;
   }) {
-    this.#tree = options.tree;
-    this.#device = options.device;
-    this.#posix = options.posix;
+    this.#mount = options.mount;
     this.#paths = options.paths;
+    this.#perPath = options.perPath;
     this.#run = options.run;
   }
 
@@ -53,69 +51,34 @@ export class KernelFileSystemTree {
     return this.#run(signal, run);
   }
 
-  async root(signal?: AbortSignal): Promise<KernelTreeEntry> {
-    const node = this.#tree.root;
-    return { path: node.path, stat: await this.#stat(node, signal), node };
+  root(): Promise<KernelTreeEntry> {
+    return this.#entry("/", this.#mount.root);
   }
 
-  async readdir(directory: KernelTreeEntry, signal?: AbortSignal): Promise<readonly string[]> {
-    const node = directory.node;
-    if (node === undefined) return this.#paths.readdir(directory.path);
-    if (directory.stat.type !== "directory") throw kernelError("ENOTDIR");
-    this.#check(directory, 4);
-    return this.#tree.names(node, signal);
+  async readdir(directory: KernelTreeEntry): Promise<readonly string[]> {
+    if (directory.resolved === undefined) return this.#perPath.readdir(directory.path);
+    return this.#paths.listDirectoryAsync(directory.resolved);
   }
 
-  async lstat(
-    directory: KernelTreeEntry,
-    name: string,
-    signal?: AbortSignal,
-  ): Promise<KernelTreeEntry> {
+  async lstat(directory: KernelTreeEntry, name: string): Promise<KernelTreeEntry> {
     const path = childPath(directory.path, name);
-    if (directory.node === undefined || synthesized(path))
-      return { path, stat: await this.#paths.lstat(path) };
-    this.#check(directory, 1);
-    const node = await this.#tree.lookup(directory.node, name, signal);
-    return { path, stat: await this.#stat(node, signal), node };
+    const parent = directory.resolved;
+    if (parent === undefined || synthesized(path))
+      return { path, stat: await this.#perPath.lstat(path) };
+    await this.#paths.searchDirectoryAsync(parent.mount, parent.inode);
+    return this.#entry(path, await parent.mount.storage.lookup(parent.inode, name));
   }
 
-  async readlink(entry: KernelTreeEntry, signal?: AbortSignal): Promise<string> {
-    return entry.node === undefined
-      ? this.#paths.readlink(entry.path)
-      : this.#tree.readlink(entry.node, signal);
+  async readlink(entry: KernelTreeEntry): Promise<string> {
+    if (entry.resolved === undefined) return this.#perPath.readlink(entry.path);
+    return this.#paths.readlinkResolvedAsync(entry.resolved);
   }
 
-  /** The metadata `checkAccessAsync` would read is the directory's own, already in its stat. */
-  #check(directory: KernelTreeEntry, requested: number) {
-    if (this.#posix.credentials === undefined) return;
-    const metadata = directory.stat.posix;
-    if (metadata === undefined) throw kernelError("ENOTSUP");
-    this.#posix.checkMetadataAccess(metadata, "directory", requested, true);
-  }
-
-  async #stat(node: KernelTreeNode, signal?: AbortSignal): Promise<KernelStat> {
-    const stat = await this.#tree.stat(node, signal);
-    let posix: PosixMetadata | undefined;
-    try {
-      posix = await this.#tree.metadata(node, signal);
-    } catch (error) {
-      if (!isCode(error, "ENOTSUP")) throw error;
-    }
-    return {
-      ...stat,
-      ino: node.inode,
-      dev: this.#device,
-      ...this.#tree.native(node),
-      ...(posix === undefined ? {} : { posix }),
-    };
+  async #entry(path: string, inode: Inode): Promise<KernelTreeEntry> {
+    const resolved = { mount: this.#mount, inode, stat: await this.#mount.storage.stat(inode) };
+    return { path, stat: await this.#paths.statResolvedAsync(resolved), resolved };
   }
 }
 
 const synthesized = (path: string) =>
-  virtualDevice(path) !== undefined ||
-  posixPathAlias(path) !== undefined ||
-  descriptorPathSuffix(path) !== undefined;
-
-function isCode(error: unknown, code: string): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === code;
-}
+  virtualDevice(path) !== undefined || resolvesThroughDescriptors(path);

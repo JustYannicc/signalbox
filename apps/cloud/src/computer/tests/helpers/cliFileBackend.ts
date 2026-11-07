@@ -226,6 +226,8 @@ export async function cliFileBackendFixture(
   return {
     files,
     processConfiguration,
+    /** Computer's own storage, below the overlay, for rows only its own operations write. */
+    upper: owned.upper,
     fs: createNodeFs(files.backend).fs,
     canonical,
     rootDescriptor: owner.rootDescriptor,

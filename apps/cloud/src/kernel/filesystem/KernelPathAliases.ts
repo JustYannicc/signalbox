@@ -31,3 +31,8 @@ export function descriptorPathSuffix(path: string): DescriptorPathSuffix | undef
   const relativePath = (match[2] ?? "").replace(/^\/+/, "");
   return { fd, relativePath: relativePath === "" ? "." : relativePath };
 }
+
+/** A path the kernel answers from its descriptor table, which no storage write tracks. */
+export function resolvesThroughDescriptors(path: string): boolean {
+  return posixPathAlias(path) !== undefined || descriptorPathSuffix(path) !== undefined;
+}

@@ -10,16 +10,20 @@ import {
 import { currentKernelSignal } from "./process/KernelExecution.ts";
 import type { Inode, MaybePromise, Stat, Storage } from "./storage.ts";
 import { kernelError } from "./filesystem/KernelFileSystemErrors.ts";
+import { isStorageSnapshot } from "./KernelStorageSnapshot.ts";
 
 export class KernelLowerFileSystemDirectoryLayer {
   readonly #upper: Storage;
   readonly #source: () => KernelLowerFileSystemSourceIndex | undefined;
   readonly #pathByUpperDirectory = new Map<Inode, string>();
   readonly #upperDirectoryByPath = new Map<string, Inode>();
+  /** A snapshot never changes, so a path it lacks stays missing; live storage may gain it. */
+  readonly #missingUpper: Set<string> | undefined;
 
   constructor(upper: Storage, source: () => KernelLowerFileSystemSourceIndex | undefined) {
     this.#upper = upper;
     this.#source = source;
+    this.#missingUpper = isStorageSnapshot(upper) ? new Set() : undefined;
     this.#rememberUpperPath("/", upper.root);
   }
 
@@ -42,14 +46,16 @@ export class KernelLowerFileSystemDirectoryLayer {
       this.forgetUpperPath(path);
     }
 
+    if (this.#missingUpper?.has(path)) return undefined;
     let current = this.#upper.root;
     let currentPath = "/";
     for (const component of pathComponents(path)) {
       try {
         current = this.#upper.lookup(current, component);
       } catch (error) {
-        if (isCode(error, "ENOENT")) return undefined;
-        throw error;
+        if (!isCode(error, "ENOENT")) throw error;
+        this.#missingUpper?.add(path);
+        return undefined;
       }
       currentPath = childPath(currentPath, component);
       if (this.#upper.stat(current).type !== "directory") throw kernelError("ENOTDIR");
