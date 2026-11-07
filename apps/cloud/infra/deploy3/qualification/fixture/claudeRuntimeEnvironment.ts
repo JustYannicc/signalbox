@@ -1,7 +1,9 @@
 import { readClaudeFacetConfiguration } from "./claudeFacetConfiguration.ts";
 import {
   assertQualifierClaudeFacetConfiguration as assertQualifierClaudeNativeFacetConfiguration,
+  assertQualifierClaudeInputs,
   type QualifierClaudeFacetConfiguration,
+  type QualifierClaudeInputs,
 } from "../facetEnvironmentContract.ts";
 import type { ClaudeAuthorityBindings } from "./claudeAuthorities.ts";
 import type { HarnessCProductFacetEnvironment } from "../../../../src/harness/HarnessCProductFacet.ts";
@@ -42,4 +44,15 @@ export function claudeCapability(
 export async function claudeConfiguration(env: ClaudeFacetEnvironment) {
   const checked = assertQualifierClaudeNativeFacetConfiguration(env);
   return readClaudeFacetConfiguration(checked, claudeCapability(env));
+}
+
+/** What a Claude owner reads. Harness-process placement fields belong to whichever host opened it. */
+export type ClaudeOwnerEnvironment = typeof QualifierClaudeInputs.Type &
+  Pick<
+    ClaudeFacetEnvironment,
+    "HARNESS_C_PRODUCT_CAPABILITIES" | "HARNESS_C_TARGET_PREPARED_RELEASE"
+  >;
+
+export async function claudeOwnerConfiguration(env: ClaudeOwnerEnvironment) {
+  return readClaudeFacetConfiguration(assertQualifierClaudeInputs(env), claudeCapability(env));
 }

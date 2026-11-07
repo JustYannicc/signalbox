@@ -9,10 +9,23 @@ import type { HarnessRunArtifact } from "../../../../src/harness/HarnessRunStore
 import type { HarnessThreadSupervisorPublisher } from "../../../../src/harness/HarnessThreadSupervisor.ts";
 import { BlobJournal } from "./blobJournal.ts";
 import { readConfiguration, readAsset } from "./configuration.ts";
-import { assert, control, encoder, jsonBytes, sameArtifact } from "./common.ts";
+import { assert, control, encoder, jsonBytes, sameArtifact, sha256 } from "./common.ts";
 import { describeFiles } from "./snapshot.ts";
 import { readClaudeQualificationAssets } from "../runtimeAssets.ts";
 import type { ClaudeGatewayAccess } from "../../../../src/harness/ClaudeGatewayAccess.ts";
+import type { ClaudeProductOwnerRuntime } from "../../../../src/harness/ClaudeProductOwners.ts";
+
+export type ClaudeOwnerRole = keyof ClaudeProductOwnerRuntime["code"];
+const ownerSource = (
+  claude: Awaited<ReturnType<typeof readConfiguration>>["claude"],
+  role: ClaudeOwnerRole,
+) =>
+  ({
+    kernel: claude.kernelSource,
+    cli: claude.cliSource,
+    computer: claude.computerSource,
+    sdk: claude.sdkHostSource,
+  })[role];
 
 export interface CapabilityEnvironment {
   PROGRAM_ASSETS: Fetcher;
@@ -26,6 +39,7 @@ export class QualifierCapabilities<
   protected readonly journal = new BlobJournal(this.ctx.storage);
   #configuration: ReturnType<typeof readConfiguration> | undefined;
   #claude: ReturnType<typeof readClaudeQualificationAssets> | undefined;
+  #ownerVersions: Promise<Record<ClaudeOwnerRole, string>> | undefined;
   protected configuration() {
     return (this.#configuration ??= readConfiguration(
       this.env.PROGRAM_ASSETS,
@@ -78,6 +92,29 @@ export class QualifierCapabilities<
     variant: "baseline" | "hooks";
   }): Promise<ClaudeGatewayAccess> {
     throw new Error("The Claude model gateway must issue scoped access");
+  }
+  /** A Claude thread provisions its owners from this; the whole qualifier file never leaves here. */
+  async claudeThreadInputs(variant: "baseline" | "hooks") {
+    const config = await this.configuration();
+    return {
+      runtime: config.claude.runtime,
+      expected: config.claude.expected[variant],
+      environmentPackages: config.claude.environmentPackages,
+      versions: await (this.#ownerVersions ??= this.ownerVersions()),
+    };
+  }
+  async claudeOwnerSource(role: ClaudeOwnerRole) {
+    return ownerSource((await this.configuration()).claude, role);
+  }
+  private async ownerVersions() {
+    const claude = (await this.configuration()).claude;
+    const digest = (role: ClaudeOwnerRole) => sha256(encoder.encode(ownerSource(claude, role)));
+    return {
+      kernel: await digest("kernel"),
+      cli: await digest("cli"),
+      computer: await digest("computer"),
+      sdk: await digest("sdk"),
+    };
   }
   async hostConfiguration() {
     const config = await this.configuration();

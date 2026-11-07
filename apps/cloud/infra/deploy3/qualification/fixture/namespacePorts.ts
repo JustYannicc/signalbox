@@ -18,7 +18,10 @@ type JournalReceipt = Awaited<ReturnType<QualifierCapabilities["append"]>>;
 
 /** Namespace clients describe the RPC contract without depending on their object constructors. */
 export type QualifierProofPort = Rpc.DurableObjectBranded &
-  Pick<QualifierCapabilities, "append" | "readArtifactChunk"> & {
+  Pick<
+    QualifierCapabilities,
+    "append" | "readArtifactChunk" | "claudeThreadInputs" | "claudeOwnerSource"
+  > & {
     config(): Promise<Configuration>;
     claudeStepForLoader(): Promise<ClaudeStep>;
     modelConstructionPhase(): Promise<{ route: string; logicalIncarnation: number }>;

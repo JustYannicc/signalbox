@@ -21,6 +21,9 @@ export {
   QualifierPlacementStore,
 } from "./stores.ts";
 export { QualifierCommands, QualifierTail } from "./loader.ts";
+export { QualifierClaudeThread } from "./claudeThread.ts";
+export { LocalUserObject as QualifierClaudeUser } from "../../../../src/user/LocalUserObject.ts";
+export { LocalPoolObject as QualifierClaudePool } from "../../../../src/pool/LocalPoolObject.ts";
 
 import { ROUTES } from "./routes.ts";
 import { assertQualifierRuntimeConfiguration } from "../environmentContract.ts";

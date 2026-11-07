@@ -146,7 +146,7 @@ export const QualifierCodexFacetConfiguration = runtime.codex;
 export const assertQualifierClaudeFacetConfiguration = Schema.decodeUnknownSync(runtime.claude);
 export const assertQualifierCodexFacetConfiguration = Schema.decodeUnknownSync(runtime.codex);
 
-const decodeClaudeInputs = Schema.decodeUnknownSync(QualifierClaudeInputs);
+export const assertQualifierClaudeInputs = Schema.decodeUnknownSync(QualifierClaudeInputs);
 const decodeCodexInputs = Schema.decodeUnknownSync(QualifierCodexInputs);
 
 export function qualifierClaudeFacetInputs(
@@ -157,7 +157,7 @@ export function qualifierClaudeFacetInputs(
   },
   variant: "baseline" | "hooks",
 ) {
-  return decodeClaudeInputs({
+  return assertQualifierClaudeInputs({
     RUN_ID: environment.RUN_ID,
     CONFIG_SHA256: environment.CONFIG_SHA256,
     QUALIFIER_CLAUDE_VARIANT: variant,

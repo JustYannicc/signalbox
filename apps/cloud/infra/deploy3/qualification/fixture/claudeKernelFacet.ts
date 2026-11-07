@@ -12,16 +12,16 @@ import { claudeSeedPaths } from "./claudeSeed.ts";
 import { facetState, retainedFacetState, flushFacetDiagnostics } from "./facetState.ts";
 import {
   claudeCapability,
-  claudeConfiguration,
-  type ClaudeFacetEnvironment,
+  claudeOwnerConfiguration,
+  type ClaudeOwnerEnvironment,
 } from "./claudeRuntimeEnvironment.ts";
 import { capture } from "./snapshot.ts";
 import { assert } from "./common.ts";
 
 const decodeTurn = Schema.decodeSync(Schema.fromJsonString(Schema.toCodecJson(RunnerTurn)));
-const Base = createClaudeKernelFacetClass<ClaudeFacetEnvironment>(
+const Base = createClaudeKernelFacetClass<ClaudeOwnerEnvironment>(
   async ({ ctx, env, configuration }) => {
-    const { claude, host } = await claudeConfiguration(env);
+    const { claude, host } = await claudeOwnerConfiguration(env);
     const turn = decodeTurn(claude.turnJson[0]!);
     assert(configuration.threadId === turn.threadId, "CLI kernel changed thread owner");
     const cap = claudeCapability(env);

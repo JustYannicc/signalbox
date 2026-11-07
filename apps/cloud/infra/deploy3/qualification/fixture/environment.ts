@@ -26,6 +26,22 @@ export interface QualifierEnvironment
   HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace<HarnessThreadSupervisorObject>;
   PLACEMENT_STORES: DurableObjectNamespace<QualifierPlacementStorePort>;
   PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<QualifierShardPort>;
+  CLAUDE_THREADS: DurableObjectNamespace<
+    InstanceType<
+      ReturnType<
+        typeof import("../../../../src/thread/LocalClaudeThreadObject.ts").createLocalClaudeThreadObject<
+          QualifierEnvironment,
+          unknown
+        >
+      >
+    >
+  >;
+  CLAUDE_USERS: DurableObjectNamespace<
+    import("../../../../src/user/LocalUserObject.ts").LocalUserObject
+  >;
+  CLAUDE_POOLS: DurableObjectNamespace<
+    import("../../../../src/pool/LocalPoolObject.ts").LocalPoolObject
+  >;
 }
 export const proof = (env: Pick<QualifierEnvironment, "QUALIFIER" | "RUN_ID">) =>
   env.QUALIFIER.getByName(env.RUN_ID);
