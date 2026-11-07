@@ -57,6 +57,7 @@ export interface ProductClaudeKernelHostOptions<G> extends Pick<
   readonly kernel: ClaudeKernelSessionPort;
   readonly commands: ComputerProgramOwnerPort & {
     configure(input: ComputerExecutionConfiguration): Promise<void>;
+    configured(): Promise<boolean>;
   };
   readonly admission: Omit<ComputerExecutionConfiguration, "programs">;
   readonly native: {
@@ -185,7 +186,8 @@ export const createProductClaudeKernelHost = <G>(
                 await transfer.close();
               }
             }
-            await options.commands.configure({
+            const computer = new ComputerExecutionPort(options.commands);
+            await computer.configure({
               ...options.admission,
               programs: options.programs.codes,
             });
@@ -194,7 +196,7 @@ export const createProductClaudeKernelHost = <G>(
               process: options.native.process,
               loaded: { plan: loaded.plan },
               catalog: { id: catalog.id, stages: catalog.stages },
-              owner: new ComputerExecutionPort(options.commands),
+              owner: computer,
               source,
               callbacks,
               cli: new ClaudeCliHostPort(options.native.cliHost),

@@ -19,6 +19,7 @@ export type ClaudeFacetEnvironment = typeof QualifierClaudeFacetConfiguration.Ty
       configure(
         input: import("../../../../src/computer/ComputerExecutionObject.ts").ComputerExecutionConfiguration,
       ): Promise<void>;
+      configured(): Promise<boolean>;
     };
     readonly CLAUDE_SDK_HOST: import("../../../../src/harness/ClaudeSdkHostProtocol.ts").ClaudeSdkHostService;
   };

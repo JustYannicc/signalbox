@@ -42,6 +42,7 @@ export interface ClaudeProductOwnerRuntime {
 type KernelFacet = InstanceType<ReturnType<typeof createClaudeKernelFacetClass>>;
 type ComputerOwner = ComputerProgramOwnerPort & {
   configure(input: ComputerExecutionConfiguration): Promise<void>;
+  configured(): Promise<boolean>;
 };
 
 /**
