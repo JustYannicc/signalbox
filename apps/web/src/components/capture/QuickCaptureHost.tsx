@@ -26,6 +26,14 @@ export function QuickCaptureHost() {
   const routeThreadRef = useParams({ strict: false, select: resolveThreadRouteRef });
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
 
+  useEffect(
+    () =>
+      window.desktopBridge?.onMenuAction((action) => {
+        if (action === "capture.open") openQuickCapture();
+      }),
+    [],
+  );
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isCommandPaletteOpen()) return;

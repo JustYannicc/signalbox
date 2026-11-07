@@ -8,7 +8,11 @@ import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
 
-import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type DesktopCaptureEvent,
+  type DesktopSnapShotEvent,
+  DEFAULT_CLIENT_SETTINGS,
+} from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -22,6 +26,7 @@ import {
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
+  CAPTURE_EVENT_CHANNEL,
   TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
@@ -106,6 +111,10 @@ export class DesktopWindow extends Context.Service<
     ) => Effect.Effect<void, DesktopWindowError>;
     readonly dispatchSnapShotEvent: (
       event: DesktopSnapShotEvent,
+    ) => Effect.Effect<void, DesktopWindowError>;
+    readonly dispatchCaptureEvent: (
+      event: DesktopCaptureEvent,
+      options?: { readonly createHiddenIfMissing?: boolean },
     ) => Effect.Effect<void, DesktopWindowError>;
     // The Electron `zoomIn`/`zoomOut` menu roles act on whichever webContents
     // has keyboard focus, so with an embedded preview WebContentsView (or
@@ -313,10 +322,8 @@ export const make = Effect.gen(function* () {
   });
 
   // currentMainOrFirst / focusedMainOrFirst fall back to "any first window",
-  // which during WSL-only boot is the connecting splash. The splash is never
-  // registered via setMain, so it must be treated as "no real main window" --
-  // otherwise ensureMain/activate/dispatchMenuAction latch onto it and never
-  // open (or retry) the real main.
+  // which may be the connecting splash or the capture panel. Neither is a main
+  // window, so ensureMain/activate/dispatchMenuAction must ignore them.
   const withoutSplash = (window: Option.Option<Electron.BrowserWindow>) =>
     Ref.get(splashWindowRef).pipe(
       Effect.map((splash) =>
@@ -326,13 +333,30 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
-  const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
+  const withoutCapturePanel = (window: Option.Option<Electron.BrowserWindow>) =>
+    Effect.sync(() => {
+      if (Option.isNone(window)) return window;
+      try {
+        return new URL(window.value.webContents.getURL()).hash === "#/capture"
+          ? Option.none<Electron.BrowserWindow>()
+          : window;
+      } catch {
+        return window;
+      }
+    });
 
-  const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
-    Electron.BrowserWindow,
-    DesktopWindowError
-  > {
+  const ignoreAuxiliaryWindow = (window: Option.Option<Electron.BrowserWindow>) =>
+    withoutSplash(window).pipe(Effect.flatMap(withoutCapturePanel));
+  const currentMainWindow = electronWindow.currentMainOrFirst.pipe(
+    Effect.flatMap(ignoreAuxiliaryWindow),
+  );
+  const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(
+    Effect.flatMap(ignoreAuxiliaryWindow),
+  );
+
+  const createWindow = Effect.fn("desktop.window.createWindow")(function* (
+    revealWhenReady: boolean = true,
+  ): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
@@ -791,13 +815,15 @@ export const make = Effect.gen(function* () {
       revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
     }
     bindFirstRevealTrigger(revealSubscribers, () => {
-      if (!window.isDestroyed()) {
+      if (revealWhenReady && !window.isDestroyed()) {
         window.webContents.setBackgroundThrottling(true);
       }
-      if (persistedSettings.mainWindowMaximized) {
+      if (revealWhenReady && persistedSettings.mainWindowMaximized) {
         window.maximize();
       }
-      void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
+      if (revealWhenReady) {
+        void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
+      }
     });
 
     loadApplication();
@@ -821,6 +847,13 @@ export const make = Effect.gen(function* () {
     return window;
   }).pipe(Effect.withSpan("desktop.window.createMain"));
 
+  const createMainHidden = Effect.gen(function* () {
+    const window = yield* createWindow(false);
+    yield* electronWindow.setMain(window);
+    yield* logWindowInfo("hidden main window created for queued capture");
+    return window;
+  }).pipe(Effect.withSpan("desktop.window.createMainHidden"));
+
   const ensureMain = Effect.gen(function* () {
     const existingWindow = yield* currentMainWindow;
     if (Option.isSome(existingWindow)) {
@@ -828,6 +861,14 @@ export const make = Effect.gen(function* () {
     }
     return yield* createMain;
   }).pipe(Effect.withSpan("desktop.window.ensureMain"));
+
+  const ensureMainHidden = Effect.gen(function* () {
+    const existingWindow = yield* electronWindow.main;
+    if (Option.isSome(existingWindow) && !existingWindow.value.isDestroyed()) {
+      return existingWindow.value;
+    }
+    return yield* createMainHidden;
+  }).pipe(Effect.withSpan("desktop.window.ensureMainHidden"));
 
   const revealOrCreateMain = Effect.gen(function* () {
     const window = yield* ensureMain;
@@ -895,11 +936,23 @@ export const make = Effect.gen(function* () {
   const dispatchRendererEvent = Effect.fn("desktop.window.dispatchRendererEvent")(function* (
     channel: string,
     payload: unknown,
-    { reveal = true }: { readonly reveal?: boolean } = {},
+    {
+      reveal = true,
+      createHiddenIfMissing = false,
+    }: { readonly reveal?: boolean; readonly createHiddenIfMissing?: boolean } = {},
   ) {
     const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
-    if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
-    const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
+    if (Option.isNone(existingWindow) && (yield* waitingForBackend)) {
+      return;
+    }
+    const targetWindow = Option.isSome(existingWindow)
+      ? existingWindow.value
+      : createHiddenIfMissing
+        ? yield* ensureMainHidden
+        : reveal
+          ? yield* ensureMain
+          : undefined;
+    if (targetWindow === undefined) return;
     if (targetWindow.isDestroyed()) return;
     const send = Effect.sync(() => {
       if (!targetWindow.isDestroyed()) targetWindow.webContents.send(channel, payload);
@@ -968,6 +1021,14 @@ export const make = Effect.gen(function* () {
         reveal: event.type === "started",
       });
     }),
+    dispatchCaptureEvent: Effect.fn("desktop.window.dispatchCaptureEvent")(
+      function* (event, options) {
+        yield* dispatchRendererEvent(CAPTURE_EVENT_CHANNEL, event, {
+          reveal: false,
+          createHiddenIfMissing: options?.createHiddenIfMissing ?? false,
+        });
+      },
+    ),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
       const window = yield* focusedMainWindow;

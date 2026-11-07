@@ -47,8 +47,21 @@ describe("app startup failures", () => {
     expect(bootShell?.text).toContain("Startup chunks failed");
   });
 
+  it("loads the capture renderer without importing the app connection bootstrap", async () => {
+    const mainImported = vi.fn(() => ({ startup: Promise.resolve() }));
+    const panelImported = vi.fn(() => ({ startup: Promise.resolve() }));
+    vi.doMock("./main", mainImported);
+    vi.doMock("./components/capture/desktopCaptureEntry", panelImported);
+    vi.stubGlobal("window", { desktopBridge: {}, location: { hash: "#/capture" } });
+    await import("./bootstrap");
+    await vi.dynamicImportSettled();
+    expect(panelImported).toHaveBeenCalledOnce();
+    expect(mainImported).not.toHaveBeenCalled();
+  });
+
   afterEach(() => {
     vi.doUnmock("./main");
+    vi.doUnmock("./components/capture/desktopCaptureEntry");
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
