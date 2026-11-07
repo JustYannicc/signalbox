@@ -49,25 +49,27 @@ export const CliWorkingSetPolicy = Schema.Struct({
   metadataLimit: Schema.Int.check(Schema.isGreaterThan(0)),
   pathByteLimit: Schema.Int.check(Schema.isGreaterThan(0)),
 });
+/** What the Claude facet and its kernel read; the shard hands them only this, never the whole file. */
+export const ClaudeRuntimeConfiguration = Schema.Struct({
+  schema: Schema.Literal("sb1070/deploy3-claude-facet/v1"),
+  purpose: Schema.Literal("qualification"),
+  assets: Deploy3ClaudeAssets,
+  workload: Schema.Struct({
+    collectorNonce: Text,
+    apiRevision: Schema.Literal("EC1APIr2"),
+    model: Text,
+    mcpProbe: ClaudeMcpProbe,
+  }),
+  turnJson: Schema.Struct({ baseline: Schema.Array(Text), hooks: Schema.Array(Text) }),
+  seed: ClaudeSeedConfiguration,
+  workingSet: CliWorkingSetPolicy,
+});
 export const BaseConfiguration = Schema.Struct(base);
 export const ConfigurationSchema = Schema.Struct({
   ...base,
   facetSource: Text,
   claude: Schema.Struct({
-    runtime: Schema.Struct({
-      schema: Schema.Literal("sb1070/deploy3-claude-facet/v1"),
-      purpose: Schema.Literal("qualification"),
-      assets: Deploy3ClaudeAssets,
-      workload: Schema.Struct({
-        collectorNonce: Text,
-        apiRevision: Schema.Literal("EC1APIr2"),
-        model: Text,
-        mcpProbe: ClaudeMcpProbe,
-      }),
-      turnJson: Schema.Struct({ baseline: Schema.Array(Text), hooks: Schema.Array(Text) }),
-      seed: ClaudeSeedConfiguration,
-      workingSet: CliWorkingSetPolicy,
-    }),
+    runtime: ClaudeRuntimeConfiguration,
     facetSource: Text,
     sdkHostSource: Text,
     kernelSource: Text,

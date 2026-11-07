@@ -120,11 +120,16 @@ export function validateQualifierFacetEnvironments(
       const final =
         provider === "codex"
           ? environment
-          : createQualifierClaudeFacetEnvironment(environment, shard, provider, {
-              access: authorities,
-              executor: authorities,
-              continuations: authorities,
-            });
+          : createQualifierClaudeFacetEnvironment(
+              environment,
+              { ...shard, runtime: configuration.claude.runtime },
+              provider,
+              {
+                access: authorities,
+                executor: authorities,
+                continuations: authorities,
+              },
+            );
       if (provider === "codex") decodeCodex(final);
       else decodeClaude(final);
       results.push({ provider, phase, environment: final });

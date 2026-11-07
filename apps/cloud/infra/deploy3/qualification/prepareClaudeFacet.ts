@@ -81,7 +81,7 @@ export async function prepareClaudeFacetCode(
   const modules = calibration ? await releaseModules(undefined) : {};
   const environment = createQualifierClaudeFacetEnvironment(
     code.env ?? {},
-    inputs,
+    { ...inputs, runtime: configuration.claude.runtime },
     variant,
     inputs.authorities,
   );

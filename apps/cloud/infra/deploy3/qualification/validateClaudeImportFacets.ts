@@ -36,11 +36,16 @@ export function validateClaudeImportFacetEnvironments(
       { shardOwner: "qualifier/claude-import-calibration", loaderId: key, facetKey: key },
       { exports: { HarnessProgramAssetsBinding: () => capability } },
     );
-    const final = createQualifierClaudeFacetEnvironment(initial, source, variant, {
-      access: capability,
-      executor: capability,
-      continuations: capability,
-    });
+    const final = createQualifierClaudeFacetEnvironment(
+      initial,
+      { ...source, runtime: configuration.claude.runtime },
+      variant,
+      {
+        access: capability,
+        executor: capability,
+        continuations: capability,
+      },
+    );
     assertQualifierClaudeFacetConfiguration(final);
     return { variant, status: "passed" as const };
   });

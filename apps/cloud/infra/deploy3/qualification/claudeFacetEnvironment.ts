@@ -9,7 +9,7 @@ export function createQualifierClaudeFacetEnvironment<
   Authority,
 >(
   environment: Environment,
-  source: { readonly RUN_ID: string; readonly CONFIG_SHA256: string },
+  source: Parameters<typeof qualifierClaudeFacetInputs>[0],
   variant: "baseline" | "hooks",
   authorities: {
     readonly access: Authority;
