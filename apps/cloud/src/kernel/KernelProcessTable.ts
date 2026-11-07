@@ -472,7 +472,12 @@ export class KernelProcessTable {
         this.#waiters.matchesSelector(process, parent.value.processGroupId, selector),
       )
       .filter((process) => !process.completionObserved && process.outcome === undefined);
-    if (targets.length === 0) return kernelError("NOT_FOUND", "No matching live process");
+    const notFound = () =>
+      kernelError(
+        "NOT_FOUND",
+        `No matching live process (operation=signalPid, pid=${selector}, signal=${signal})`,
+      );
+    if (targets.length === 0) return notFound();
     if (signal === 0) return kernelOk(undefined);
 
     let accepted = false;
@@ -493,7 +498,7 @@ export class KernelProcessTable {
       for (const result of rest) this.#wakes.release(result.wakeToken);
       return first!;
     }
-    return firstFailure ?? kernelError("NOT_FOUND", "No matching live process");
+    return firstFailure ?? notFound();
   }
 
   dispose(): Promise<KernelResult<void>> {

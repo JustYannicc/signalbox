@@ -26,6 +26,33 @@ describe("Node harness terminal detection", () => {
 });
 
 describe("Node harness teardown", () => {
+  it.each([
+    "NOT_FOUND",
+    "ESRCH",
+    "INVALID_HANDLE",
+    "EXPIRED",
+    "PERMISSION_DENIED",
+    "INVALID_ARGUMENT",
+    "IO_ERROR",
+  ])(
+    "settles abort after a reaped child reports %s, preserving real signal failures",
+    (mode) =>
+      new Promise<void>((resolve, reject) => {
+        const worker = new NodeWorkerThreads.Worker(
+          new URL("./tests/reapedChildCancellationWorker.ts", import.meta.url),
+          { workerData: mode },
+        );
+        onTestFinished(async () => {
+          await worker.terminate();
+        });
+        worker.on("error", reject);
+        worker.on("exit", (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`Reaped child cancellation worker exited with ${code}.`));
+        });
+      }),
+  );
+
   it.each(["exit", "abort"])(
     "only calls a guest's replacement methods while the guest is installed, on %s",
     (mode) =>

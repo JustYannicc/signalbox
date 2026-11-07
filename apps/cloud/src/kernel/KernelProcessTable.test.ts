@@ -352,7 +352,10 @@ describe("KernelProcessTable", () => {
     expect(signals.map((signal) => signal.mock.calls.length)).toEqual([2, 2, 2]);
     expect(table.signalPid(undefined, 999, 0)).toMatchObject({
       status: "error",
-      error: { code: "NOT_FOUND" },
+      error: {
+        code: "NOT_FOUND",
+        message: "No matching live process (operation=signalPid, pid=999, signal=0)",
+      },
     });
 
     completions.forEach((completion) => completion.resolve(status(0)));
