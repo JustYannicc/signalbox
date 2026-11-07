@@ -24,6 +24,7 @@ interface ChildEntrypoint<Host extends object> {
 
 /** Transports prepared child code without moving its completion acknowledgement out of the facet. */
 export interface ChildWorkerLoaderPort {
+  readonly cells?: import("../codeMode/Types.ts").CodeModeCellLoaderPort;
   readonly run: (input: ChildWorkerInvocation, invocation: RpcTarget) => Promise<KernelCommandExit>;
 }
 

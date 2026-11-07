@@ -18,6 +18,7 @@ import { ChildWorkerLifetimes } from "./ChildWorkerLifetimes.ts";
 import {
   createComputerProgramCatalog,
   type ComputerCatalogProgram,
+  type ComputerCodeModeHost,
 } from "./ComputerProgramCatalog.ts";
 import type { KernelBashPort } from "../kernel/KernelBashPort.ts";
 import type { KernelCoreutilsPort } from "../kernel/KernelCoreutilsPort.ts";
@@ -30,7 +31,9 @@ export interface ChildProgramCatalogOptions {
   readonly filesystem: KernelFileSystem;
   readonly loader: WorkerLoader | ChildWorkerLoaderPort;
   readonly capacity: Pick<ChildWorkerCapacity, "run">;
+  readonly physicalCapacity?: Pick<ChildWorkerCapacity, "acquire"> | undefined;
   readonly programs: ChildProgramCodes;
+  readonly codeModeHost?: ComputerCodeModeHost;
   readonly hostname: string;
   readonly lifetimes?: ChildWorkerLifetimes;
   readonly reservationFor?: (
@@ -41,7 +44,7 @@ export interface ChildProgramCatalogOptions {
 
 export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
   const lifetimes = options.lifetimes ?? new ChildWorkerLifetimes();
-  const catalog = createComputerProgramCatalog(options.programs);
+  const catalog = createComputerProgramCatalog(options.programs, options.codeModeHost);
   const implementations = new Map<string, ChildWorkerProgram>();
   const bindings = new Map<string, KernelProgramBinding>();
   const credentials = bashCredentials(options.filesystem, options.hostname);
@@ -51,6 +54,7 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
       executable: entry.implementation,
       code: entry.code,
       capacity: options.capacity,
+      physicalCapacity: options.physicalCapacity,
       lifetimes,
       ...(options.reservationFor === undefined
         ? {}
@@ -117,6 +121,35 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
       implementations.set(entry.implementation, implementation);
     }
     bindings.set(path, { manifest: entry.manifest, implementation });
+  }
+  for (const [path, binding] of catalog.asyncPrograms) {
+    const registered = options.registry.register(binding.manifest);
+    if (registered.status !== "ok") throw new Error(`Could not register ${binding.manifest.name}`);
+    const implementation = binding.implementation;
+    if (implementation.kind !== "async") throw new TypeError("Computer companion must be async");
+    const prepared = Object.freeze({ codeId: binding.manifest.entrypoint, residentBytes: 0 });
+    const program: ChildWorkerProgram = {
+      kind: "async",
+      prepare: async () => prepared,
+      drain: () => options.codeModeHost!.drain(),
+      run(context) {
+        const run = async (execution: import("./ChildWorkerCapacity.ts").ChildWorkerExecution) => {
+          // The companion runs here; only its cells need a worker. Free the command slot first.
+          await execution.handoff();
+          return implementation.run(context);
+        };
+        const requester = { processes: context.processes, process: context.identity.handle };
+        const lifetime =
+          options.reservationFor === undefined
+            ? options.capacity.run(context.signal, run, requester, prepared)
+            : options
+                .reservationFor(context, program)
+                .run(context.signal, run, requester, prepared);
+        lifetimes.track(lifetime);
+        return lifetime;
+      },
+    };
+    bindings.set(path, { manifest: binding.manifest, implementation: program });
   }
   return {
     bindings,

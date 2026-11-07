@@ -4,7 +4,7 @@ import type {
   CodeModeToolDefinition,
   HostRequest,
   Json,
-} from "./types.ts";
+} from "../Types.ts";
 
 type ObjectValue = { [key: string]: Json };
 const invalid = (): never => {

@@ -239,75 +239,72 @@ describe("CodeMode cell ownership", () => {
     expect(order).toEqual(["callbacks", "stopped"]);
   });
 
-  it("keeps cancelled timer-await capacity because clearing its callback cannot settle the guest promise", async () => {
-    const worker = vmWorkerLoader();
-    const direct = createCodeModeWorkerLoader({ loader: worker.loader, policy: { cpuMs: 10 } });
-    const callbacksClosed = Promise.withResolvers<void>();
-    const client = hostClient(
-      {
-        run: (input, events) =>
-          direct.run(input, {
-            ...events,
-            closeCallbacks: async () => {
-              await events.closeCallbacks();
-              callbacksClosed.resolve();
-            },
-          }),
-      },
-      code,
-    );
-    await client.hello();
-    await client.open();
-    await client.execute(
-      "yield_control(); await new Promise(resolve => setTimeout(() => { globalThis.timerRan = true; resolve(); }, 60000));",
-    );
-    const terminate = client.request({ method: "session/terminate", sessionId: "s1", cellId: "1" });
-    await callbacksClosed.promise;
-    expect(client.capacity.active).toBe(1);
-    expect(
-      client.messages.some(
-        (message) => message.type === "operation/response" && message.id === terminate.id,
-      ),
-    ).toBe(false);
-    expect(worker.observations[0]!.context.timerRan).toBeUndefined();
-    // The fake worker fixture has no live timers after close. Its unresolved lifetime models this gap.
-    void client.abort();
-  });
-
-  it("does not acknowledge cancellation while the actual cell ESM is still suspended", async () => {
+  it("terminates a suspended timer cell and releases its capacity", async () => {
     const worker = vmWorkerLoader();
     const loader = createCodeModeWorkerLoader({ loader: worker.loader, policy: { cpuMs: 10 } });
-    const ready = Promise.withResolvers<void>();
-    const cancelled = Promise.withResolvers<void>();
-    const callbacksClosed = Promise.withResolvers<void>();
+    const client = hostClient(loader, code);
+    await client.hello();
+    await client.open();
+    await client.execute("yield_control(); await new Promise(r => setTimeout(r, 60000));");
+    const terminate = client.request({ method: "session/terminate", sessionId: "s1", cellId: "1" });
+    await terminate.response;
+    expect(client.capacity.active).toBe(0);
+    await client.abort();
+  });
+
+  it("releases a cell permit when WorkerLoader acquisition throws", async () => {
+    const failure = new Error("loader acquisition failed");
+    const loader = createCodeModeWorkerLoader({
+      loader: {
+        get: () => {
+          throw failure;
+        },
+      } as unknown as WorkerLoader,
+      policy: { cpuMs: 10 },
+    });
+    const client = hostClient(loader, code);
+    await client.hello();
+    await client.open();
+    const response = await client.execute('text("unreachable");');
+    expect(JSON.stringify(response)).toContain("loader acquisition failed");
+    await client.abort();
+    expect(client.capacity.active).toBe(0);
+  });
+  it("reports real loader disposal failures while acknowledging the stopped child", async () => {
+    const failure = new Error("cell handle disposal failed");
+    const workerDisposed = vi.fn();
     const events: CodeModeCellEvents = {
-      emit: async () => {
-        ready.resolve();
-      },
+      emit: async () => undefined,
       invoke: async () => null,
       notify: async () => undefined,
-      cancelled: () => cancelled.promise,
-      closeCallbacks: async () => {
-        callbacksClosed.resolve();
-      },
+      cancelled: () => new Promise(() => {}),
+      closeCallbacks: vi.fn(async () => undefined),
       stopped: vi.fn(async () => undefined),
     };
-    const run = loader.run(
-      codeModeInvocation(
-        code,
-        'text("ready"); await new Promise(resolve => { globalThis.__testResume = resolve; });',
-      ),
-      events,
-    );
-    await ready.promise;
-    cancelled.resolve();
-    await callbacksClosed.promise;
-    expect(events.stopped).not.toHaveBeenCalled();
-    const resume: unknown = worker.observations[0]!.context.__testResume;
-    if (typeof resume !== "function")
-      throw new Error("Suspended unit cell has no completion handle");
-    resume();
-    await expect(run).resolves.toMatchObject({ terminated: true });
+    const loader = createCodeModeWorkerLoader({
+      policy: { cpuMs: 10 },
+      loader: {
+        get: () => ({
+          [Symbol.dispose]: workerDisposed,
+          getEntrypoint: () => ({
+            [Symbol.dispose]() {
+              throw failure;
+            },
+            async run(_input: unknown, callbacks: CodeModeCellEvents) {
+              await callbacks.closeCallbacks();
+              await callbacks.stopped();
+              return { terminated: false, error: null, writes: {} };
+            },
+          }),
+        }),
+      } as unknown as WorkerLoader,
+    });
+    const running = loader.run(codeModeInvocation(code, ""), events);
+    await expect(running).rejects.toMatchObject({
+      message: "CodeMode worker disposal failed",
+      errors: [failure],
+    });
+    expect(workerDisposed).toHaveBeenCalledOnce();
     expect(events.stopped).toHaveBeenCalledOnce();
   });
 });

@@ -18,12 +18,23 @@ import type { MachineProgramInventory } from "./MachineProgramInventory.ts";
 import type { MachineFilesPort } from "./MachineFilesPort.ts";
 import { createComputerMachineProfile } from "./ComputerMachineProfile.ts";
 import { createKernelExecutableNamespace } from "../kernel/KernelExecutableNamespace.ts";
+import { createCodeModeHostProgram } from "./CodeModeHost.ts";
+import { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
 
 export interface ProductComputerOptions extends Omit<
   CommandGatewayOptions,
-  "processes" | "loader" | "systemIdentity" | "hostname" | "machine" | "resolver" | "namespace"
+  | "processes"
+  | "loader"
+  | "systemIdentity"
+  | "hostname"
+  | "machine"
+  | "resolver"
+  | "namespace"
+  | "physicalCapacity"
 > {
   readonly threadId: string;
+  readonly capacity: CommandGatewayOptions["capacity"] &
+    Pick<ChildWorkerCapacity, "limit" | "owner" | "residentByteLimit">;
   readonly systemIdentity?: SystemIdentityConfig;
   readonly machineInventory: MachineProgramInventory;
   /** Build the machine transport from the same resolved identity the isolate receives. */
@@ -76,15 +87,61 @@ export function createProductComputer(options: ProductComputerOptions) {
           options.loader.compiledModules,
           options.loader.limits,
         );
+  // Both pools issue dynamic calls from this DO context, whose physical limit is ten.
+  const physicalCapacity = new ChildWorkerCapacity(10, {
+    owner: `${options.capacity.owner}/worker-context`,
+    RESIDENT_BYTE_LIMIT: String(options.capacity.residentByteLimit),
+  });
   let gateway: ReturnType<typeof createCommandGateway>;
   try {
+    const codeModeHost =
+      programs.codeMode === undefined
+        ? undefined
+        : (() => {
+            if (loader.cells === undefined)
+              throw new TypeError("Product Computer requires a CodeMode cell loader");
+            // Cells may await commands, so they must never consume the final command permit.
+            const cells = new ChildWorkerCapacity(
+              Math.min(options.capacity.limit, physicalCapacity.limit - 1),
+              {
+                owner: `${options.capacity.owner}/code-mode`,
+                RESIDENT_BYTE_LIMIT: String(options.capacity.residentByteLimit),
+              },
+            );
+            return createCodeModeHostProgram({
+              loader: loader.cells,
+              capacity: {
+                async acquire(signal) {
+                  const logical = await cells.acquire(signal, undefined);
+                  try {
+                    const physical = await physicalCapacity.acquire(signal, undefined);
+                    return {
+                      async release() {
+                        try {
+                          await physical.release();
+                        } finally {
+                          await logical.release();
+                        }
+                      },
+                    };
+                  } catch (error) {
+                    await logical.release();
+                    throw error;
+                  }
+                },
+              },
+              code: programs.codeMode,
+            });
+          })();
     gateway = createCommandGateway({
       ...options,
       machine,
       systemIdentity,
       hostname: systemIdentity.hostname,
       loader,
+      physicalCapacity,
       processes,
+      ...(codeModeHost === undefined ? {} : { codeModeHost }),
       resolver,
       namespace: (request) =>
         createKernelExecutableNamespace({

@@ -1,4 +1,4 @@
-import { fail, type Json, type WireResult } from "./types.ts";
+import { fail, type Json, type WireResult } from "../Types.ts";
 
 type DelegateResponse = { type: "tool/result"; result: Json } | { type: "notification/delivered" };
 type Pending = {

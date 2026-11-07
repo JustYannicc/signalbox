@@ -8,6 +8,7 @@ export interface Pin {
 export interface ProductProgramPinSnapshot {
   readonly schemaVersion: 1;
   readonly commandExecutablePaths: readonly string[];
+  readonly programs: readonly string[];
   readonly files: Readonly<Record<string, Pin>>;
   readonly coreutils: { readonly commands: Readonly<Record<string, Pin>> };
   readonly coreutilsProvenance: Pin;

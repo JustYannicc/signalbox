@@ -9,6 +9,8 @@ import {
   CHILD_COREUTILS_COMMANDS,
 } from "../../src/computer/ChildProgramSet.ts";
 import { childProgramPaths } from "../../src/computer/ChildProgramPaths.ts";
+import { CODE_MODE_HOST_EXECUTABLE } from "../../src/computer/CodeModeManifest.ts";
+import { CHILD_PROGRAM_CODE_NAMES } from "../../src/computer/ChildProgramCodes.ts";
 import { KERNEL_BASH_ARTIFACT } from "../../src/kernel/KernelBashProgram.ts";
 import {
   KERNEL_BUSYBOX_ARTIFACT,
@@ -90,7 +92,9 @@ export async function describeProductProgramInputs() {
   );
   return {
     schemaVersion: 1,
+    programs: CHILD_PROGRAM_CODE_NAMES,
     commandExecutablePaths: [
+      CODE_MODE_HOST_EXECUTABLE,
       ...new Set(
         [...Object.values(CHILD_PROGRAM_PATHS), ...CHILD_UGREP_EXECUTABLES].flatMap((path) =>
           childProgramPaths(path).slice(1),

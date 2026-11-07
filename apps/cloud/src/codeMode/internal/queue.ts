@@ -1,4 +1,4 @@
-import type { CodeModeCellEvents, Json } from "./types.ts";
+import type { CodeModeCellEvents, Json } from "../Types.ts";
 
 export type CodeModeJob =
   | { readonly kind: "output"; readonly event: Parameters<CodeModeCellEvents["emit"]>[0] }

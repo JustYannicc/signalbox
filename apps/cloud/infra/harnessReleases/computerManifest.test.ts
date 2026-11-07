@@ -1,6 +1,9 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
+import * as NodeProcess from "node:process";
+import { prepareTrustedComputerInputs } from "./computerManifest/prepare.ts";
+import { CHILD_PROGRAM_CODE_NAMES } from "../../src/computer/ChildProgramCodes.ts";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import type { MachineProgramInventory } from "../../src/computer/MachineProgramInventory.ts";
@@ -226,3 +229,27 @@ function machineInventory(): MachineProgramInventory {
     ],
   };
 }
+
+const programDirectory = NodeProcess.env.SIGNALBOX_CODE_MODE_PROGRAM_DIR;
+it.skipIf(programDirectory === undefined)(
+  "prepares a fresh trusted manifest with every catalog program and artifact",
+  async () => {
+    const prepared = await prepareTrustedComputerInputs({
+      programDirectory: programDirectory!,
+      machineInventory: machineInventory(),
+    });
+    const commands = prepared.identity.manifest.identityInputs.commands;
+    expect(Object.keys(commands.programs).sort()).toEqual([...CHILD_PROGRAM_CODE_NAMES].sort());
+    expect(Object.keys(commands.sourceInventory.programs).sort()).toEqual(
+      [...CHILD_PROGRAM_CODE_NAMES].sort(),
+    );
+    expect(
+      commands.executableFiles.every((file) =>
+        commands.sourceInventory.artifacts.some(
+          (artifact) => artifact.bytes === file.bytes && artifact.sha256 === file.sha256,
+        ),
+      ),
+    ).toBe(true);
+    expect(commands.programs.codeMode).toMatchObject({ mainModule: "main.js" });
+  },
+);

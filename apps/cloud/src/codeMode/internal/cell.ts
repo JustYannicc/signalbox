@@ -1,5 +1,5 @@
 // @effect-diagnostics globalTimers:off - V1 observations use request-owned host timers outside Effect.
-import type { ChildWorkerCapacity, ChildWorkerPermit } from "../../computer/ChildWorkerCapacity.ts";
+import type { CodeModeCellCapacity, CodeModeCellPermit } from "../Capacity.ts";
 import type { CodeModeDelegates } from "./delegates.ts";
 import {
   messageError,
@@ -10,7 +10,7 @@ import {
   type CodeModeExecuteRequest,
   type Json,
   type RuntimeResponse,
-} from "./types.ts";
+} from "../Types.ts";
 
 export interface CellObservation {
   readonly cancel: AbortSignal;
@@ -45,7 +45,7 @@ export class CodeModeCell {
     loader: CodeModeCellLoaderPort;
     code: CodeModeCellCode;
     admissionController: AbortController;
-    cellCapacity: Pick<ChildWorkerCapacity, "acquire">;
+    cellCapacity: Pick<CodeModeCellCapacity, "acquire">;
     storedValues: () => Readonly<Record<string, Json>>;
     admissionSettled: () => void;
     delegates: CodeModeDelegates;
@@ -109,7 +109,7 @@ export class CodeModeCell {
       stopped: async () => this.#stopped.resolve(),
     };
     this.#lifetime = (async () => {
-      let permit: ChildWorkerPermit | undefined;
+      let permit: CodeModeCellPermit | undefined;
       let started = false;
       try {
         permit = await options.cellCapacity.acquire(options.admissionController.signal, undefined);
@@ -145,7 +145,7 @@ export class CodeModeCell {
         if (started) await this.#stopped.promise;
       } finally {
         this.#closeCallbacks();
-        permit?.release();
+        await permit?.release();
       }
     })()
       .catch((error: unknown) => {

@@ -31,6 +31,7 @@ export interface ChildWorkerProgramOptions<Host extends object> {
   readonly executable: string;
   readonly code: ChildWorkerCode;
   readonly capacity: Pick<ChildWorkerCapacity, "run">;
+  readonly physicalCapacity?: Pick<ChildWorkerCapacity, "acquire"> | undefined;
   readonly reservationFor?: (context: KernelAsyncProgramContext) => ChildWorkerReservation;
   /** Derive child-only environment values after the original context has claimed admission. */
   readonly childEnv?: (context: KernelAsyncProgramContext) => Readonly<Record<string, string>>;

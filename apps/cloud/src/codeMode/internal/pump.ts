@@ -1,7 +1,7 @@
 // @effect-diagnostics globalConsole:off - preserve nonfatal notification delivery warnings.
 import type { CodeModeGlobals } from "./globals.ts";
 import type { CodeModeJob } from "./queue.ts";
-import { messageError, type CodeModeCellEvents } from "./types.ts";
+import { messageError, type CodeModeCellEvents } from "../Types.ts";
 
 export function captureCodeModeEffects() {
   const nativeSet = globalThis.setTimeout.bind(globalThis);
