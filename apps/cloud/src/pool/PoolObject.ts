@@ -16,6 +16,7 @@ import {
   type PoolObjectNamespace,
 } from "./PoolDirectory.ts";
 import * as PoolContainer from "./PoolContainer.ts";
+import * as PoolContainerCloudflare from "./adapters/PoolContainerCloudflare.ts";
 import * as PoolEngine from "./PoolEngine.ts";
 import type { PoolLinkTarget } from "./poolLink.ts";
 import * as PoolLinks from "./PoolLinks.ts";
@@ -74,7 +75,7 @@ const makeRuntime = (ctx: DurableObjectState) => {
       Layer.provideMerge(PoolLinks.layer),
       Layer.provideMerge(
         ctx.container
-          ? PoolContainer.layerCloudflare({
+          ? PoolContainerCloudflare.layerCloudflare({
               container: ctx.container,
               storeGateway: (
                 ctx as unknown as { readonly exports: PoolExports }
@@ -83,7 +84,7 @@ const makeRuntime = (ctx: DurableObjectState) => {
               // Each container milestone is a wide event of its own.
               log: emit,
             })
-          : PoolContainer.layerUnavailable,
+          : PoolContainerCloudflare.layerUnavailable,
       ),
       Layer.provideMerge(Layer.mergeAll(PoolStore.layer, PoolEngine.layerExternalFetch)),
       Layer.provideMerge(
