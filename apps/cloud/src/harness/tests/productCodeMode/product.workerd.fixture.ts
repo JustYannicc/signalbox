@@ -125,7 +125,31 @@ export class Host extends DurableObject<Env> {
         },
       };
     };
-    const model = codeModeResponses();
+    const resultObservations: {
+      tool_call_id: string;
+      lifecycle: CodeModeLifecycleEvent[];
+    }[] = [];
+    const model = codeModeResponses((body) => {
+      if (!Array.isArray(body.input)) return;
+      const input: readonly unknown[] = body.input;
+      for (const item of input) {
+        if (
+          typeof item !== "object" ||
+          item === null ||
+          !("type" in item) ||
+          !("call_id" in item) ||
+          item.type !== "custom_tool_call_output" ||
+          typeof item.call_id !== "string" ||
+          resultObservations.some((result) => result.tool_call_id === item.call_id)
+        )
+          continue;
+        // Snapshot at the engine's first delivery of this result, before any teardown.
+        resultObservations.push({
+          tool_call_id: item.call_id,
+          lifecycle: lifecycle.filter((event) => event.tool_call_id === item.call_id),
+        });
+      }
+    });
     let driver: ReturnType<typeof appServerDriver> | undefined;
     let result: unknown;
     try {
@@ -220,6 +244,7 @@ export class Host extends DurableObject<Env> {
         machineCalls,
         cellTools,
         lifecycle,
+        resultObservations,
         execWire,
         modelRequests: model.requests,
         frames: driver.frames,

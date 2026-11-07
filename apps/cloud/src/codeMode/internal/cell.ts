@@ -31,6 +31,7 @@ export class CodeModeCell {
   readonly #admissionController: AbortController;
   #closed = false;
   #final: "Result" | "Terminated" | undefined;
+  #terminalReady = false;
   #error: string | null = null;
   #yielded: CodeModeContent[] | undefined;
   #acceptYield = false;
@@ -153,7 +154,6 @@ export class CodeModeCell {
           this.#error = messageError(error);
           this.#final = "Result";
         }
-        this.#wake();
         if (loaderInvoked) await this.#stopped.promise;
       } finally {
         this.#closeCallbacks();
@@ -171,6 +171,7 @@ export class CodeModeCell {
           this.#error = messageError(error);
           this.#final = "Result";
         }
+        this.#terminalReady = true;
         this.#wake();
       });
   }
@@ -202,7 +203,7 @@ export class CodeModeCell {
         const yielded = this.#yielded;
         this.#yielded = undefined;
         if (yielded !== undefined) return { Yielded: { ...body, content_items: yielded } };
-        if (this.#final !== undefined) {
+        if (this.#terminalReady) {
           return this.terminalResponse();
         }
         if (signal.aborted) return { Yielded: { ...body, content_items: this.#output.splice(0) } };

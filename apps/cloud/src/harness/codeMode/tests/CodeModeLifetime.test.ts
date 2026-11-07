@@ -97,12 +97,16 @@ describe("CodeMode cell ownership", () => {
       const client = hostClient(loader, code);
       await client.hello();
       await client.open();
-      const running = client.execute('text("unreachable");');
+      const running = client.execute('text("unreachable");', { yield_time_ms: 0 });
       const events = await entered.promise;
       expect(client.capacity.active).toBe(1);
       failed.reject(new Error(failure));
       expect(await running).toMatchObject({
-        result: { value: { Result: { error_text: failure } } },
+        result: { value: { Yielded: { cell_id: "1" } } },
+      });
+      await events.cancelled();
+      expect(await client.wait("1", 0).response).toMatchObject({
+        result: { value: { outcome: { LiveCell: { Yielded: { cell_id: "1" } } } } },
       });
       expect(client.capacity.active).toBe(1);
       let closed = false;

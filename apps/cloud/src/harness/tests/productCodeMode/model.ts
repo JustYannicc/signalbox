@@ -4,12 +4,13 @@ export const CODE_MODE_SOURCE =
 export const OUTPUT_SOURCE =
   'const r = await tools.exec_command({cmd:"printf code-mode-output","workdir":"/work","yield_time_ms":10000,"max_output_tokens":1000}); text(r.output);';
 
-export function codeModeResponses() {
+export function codeModeResponses(observe?: (body: Record<string, unknown>) => void) {
   const requests: Record<string, unknown>[] = [];
   return {
     requests,
     async fetch(request: Request) {
       const body: Record<string, unknown> = await request.json();
+      observe?.(body);
       requests.push(body);
       const id = `response-${requests.length}`;
       const item =
