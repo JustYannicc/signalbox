@@ -17,6 +17,7 @@ import {
   KeyboardIcon,
   KeyRoundIcon,
   LayersIcon,
+  LibraryBigIcon,
   Link2Icon,
   PaletteIcon,
   PanelsTopLeftIcon,
@@ -95,6 +96,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/sign-in": KeyRoundIcon, // signalbox: sign-in grants
   "/settings/integrations": BlocksIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
+  "/settings/blocks": LibraryBigIcon, // signalbox: block library
   "/settings/source-control": GitBranchIcon,
   "/settings/storage": HardDriveIcon,
   "/settings/connections": Link2Icon,
@@ -132,6 +134,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)) &&
       (item.to !== "/settings/sign-in" || signInGrants) && // signalbox: sign-in grants
       (item.to !== "/settings/trash" || trash) && // signalbox: trash
+      (item.to !== "/settings/blocks" || trash) && // signalbox: block library, also where folders are kept
       isSettingsPathAvailable(item.to, unsupportedCapabilities),
   );
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();

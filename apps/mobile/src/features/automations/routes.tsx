@@ -9,6 +9,7 @@ import { AutomationRouteScreen } from "./AutomationRouteScreen";
 import { AutomationRunRouteScreen } from "./AutomationRunRouteScreen";
 import { AutomationRunStepSheet } from "./AutomationRunStepSheet";
 import { AutomationsRouteScreen } from "./AutomationsRouteScreen";
+import { SettingsAutomationBlocksRouteScreen } from "./SettingsAutomationBlocksRouteScreen";
 
 /** Overlay routes, so a sheet over a run doesn't change the workspace beneath it. */
 export const AUTOMATION_OVERLAY_ROUTES = ["AutomationRunStep"] as const;
@@ -54,13 +55,18 @@ export function automationStackScreens(headers: {
   };
 }
 
-/** Settings-sheet routes for Automations: the services `w.call` can reach. */
+/** Settings-sheet routes for Automations: the services `w.call` can reach, and the blocks `w.start` can. */
 export function automationSettingsScreens() {
   return {
     SettingsConnectedServices: createNativeStackScreen({
       screen: SettingsConnectedServicesRouteScreen,
       linking: "connected-services",
       options: { title: "Connected services" },
+    }),
+    SettingsAutomationBlocks: createNativeStackScreen({
+      screen: SettingsAutomationBlocksRouteScreen,
+      linking: "block-library",
+      options: { title: "Block library" },
     }),
   };
 }

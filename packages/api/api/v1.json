@@ -154,6 +154,13 @@
       "output": "03c2b661"
     },
     {
+      "name": "automations.blocks.list",
+      "rpc": "automations.listBlocks",
+      "access": "read",
+      "input": "941a13a2",
+      "output": "1ccd2edc"
+    },
+    {
       "name": "automations.connect",
       "rpc": "automations.connect",
       "access": "write",
