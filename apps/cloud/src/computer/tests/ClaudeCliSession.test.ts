@@ -2,13 +2,18 @@ import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { ThreadId, ProviderSessionId, ProviderInstanceId } from "@t3tools/contracts";
 import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
 import { createClaudeCliFacetClass } from "../../harness/ClaudeCliSession.ts";
+import { createClaudeSdkFiles } from "../../harness/ClaudeSdkHost.ts";
 import { launchPreparedNodeHarnessProcess } from "../../harness/NodeHarnessLaunch.ts";
 import type { NodeHarnessBaseInput } from "../../harness/NodeHarnessProcess.ts";
 import type { ClaudeReleasePlan } from "../../harness/HarnessReleasePlan.ts";
 import { createNodeFs } from "../../isolate/NodeFs.ts";
 import { cliFileBackendFixture } from "./helpers/cliFileBackend.ts";
 
-vi.mock("cloudflare:workers", () => ({ RpcTarget: Object, DurableObject: Object }));
+vi.mock("cloudflare:workers", () => ({
+  RpcTarget: Object,
+  DurableObject: Object,
+  WorkerEntrypoint: Object,
+}));
 vi.mock("../../harness/NodeHarnessLaunch.ts", () => ({
   launchPreparedNodeHarnessProcess: vi.fn(),
 }));
@@ -136,6 +141,46 @@ async function fixture(options: Parameters<typeof cliFileBackendFixture>[3] = {}
 }
 
 describe("Claude CLI session close", () => {
+  it("cancels a pending SDK FileHandle read on an empty open stdin pipe", async () => {
+    const entered = Promise.withResolvers<void>();
+    const f = await fixture({
+      seed(_fs, files) {
+        const read = files.readAsync.bind(files);
+        files.readAsync = (...args) => {
+          const pending = read(...args);
+          if (files.descriptors.get(args[0]).kind === "stdio") entered.resolve();
+          return pending;
+        };
+      },
+    });
+    onTestFinished(async () => {
+      if (f.signal.aborted) return;
+      // A byte releases the original uncancellable read if the regression fails.
+      const input = f.stdin.getWriter();
+      try {
+        await input.write(new Uint8Array([1]));
+      } finally {
+        input.releaseLock();
+      }
+    });
+    const sdk = createClaudeSdkFiles(f.cli);
+    const handle = await sdk.call("open", "/dev/stdin", "r");
+    if (typeof handle !== "object" || handle === null) throw new Error("SDK open has no handle");
+    const read: unknown = Reflect.get(handle, "read");
+    if (typeof read !== "function") throw new Error("SDK handle has no read");
+    const reading = Promise.resolve<unknown>(
+      Reflect.apply(read, handle, [new Uint8Array(1), 0, 1, null]),
+    );
+    const outcome = reading.then(
+      () => ({ status: "fulfilled" as const }),
+      (reason: unknown) => ({ status: "rejected" as const, reason }),
+    );
+    await entered.promise;
+    await expect(f.cli.dispose()).resolves.toBeUndefined();
+    expect(await outcome).toMatchObject({ status: "rejected", reason: expect.any(Error) });
+    expect(f.signal.aborted).toBe(true);
+  });
+
   it("cancels a blocked pipe read while committing queued writes on close", async () => {
     const entered = Promise.withResolvers<string>();
     const f = await fixture({
