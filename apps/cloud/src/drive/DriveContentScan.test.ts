@@ -4,8 +4,13 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
 
-import { DriveContentScanState, scanDriveContents } from "./DriveContentScan.ts";
+import {
+  DriveContentScanState,
+  scanDriveContents,
+  type DriveContentScanBudget,
+} from "./DriveContentScan.ts";
 import type { DriveReader } from "./DriveReader.ts";
+import type { MetadataState } from "./DriveMetadata.ts";
 type Bytes = Effect.Success<ReturnType<DriveReader["blob"]>>;
 type TreeEntry = Effect.Success<ReturnType<DriveReader["tree"]>>[number];
 type TreeEntryKind = TreeEntry["kind"];
@@ -26,10 +31,95 @@ type FixtureFile =
       readonly size?: number | null;
     };
 
+const fixtureId = (index: number) => index.toString(16).padStart(40, "0");
+
+function metadataFixture(
+  objects: ReadonlyMap<string, { readonly bytes: Bytes; readonly kind: "tree" | "blob" }>,
+  root: string,
+  aliases: ReadonlyMap<string, string>,
+  sizes = new Map<string, number | null>(
+    [...objects].map(([oid, object]) => [oid, object.bytes.length]),
+  ),
+) {
+  const state = (oid: string): MetadataState | null => {
+    const object = objects.get(oid);
+    return object === undefined
+      ? null
+      : {
+          oid,
+          formatVersion: 1,
+          revision: 1,
+          source: {
+            kind: "pack",
+            location: {
+              oid,
+              pack: "fixture",
+              offset: 0,
+              length: object.bytes.length,
+              type: object.kind,
+              size: object.bytes.length,
+            },
+          },
+          bytesWritten: object.bytes.length,
+          checkpoint: null,
+          complete: true,
+        };
+  };
+  const reads: Array<{ oid: string; offset: number; maxBytes: number; length: number }> = [];
+  const reader = {
+    searchTreeOf: vi.fn((_commit: string | null) =>
+      Effect.succeed({ ready: true as const, tree: root }),
+    ),
+    sizes: vi.fn((oids: ReadonlyArray<string>) =>
+      Effect.succeed(new Map(oids.map((oid) => [oid, sizes.get(oid) ?? null]))),
+    ),
+    metadata: {
+      prepare: vi.fn((oid: string) => {
+        const object = objects.get(oid)!;
+        return Effect.succeed({
+          complete: true,
+          state: state(oid)!,
+          kind: object.kind,
+          size: object.bytes.length,
+        });
+      }),
+      status: vi.fn((oid: string) => Effect.succeed(state(oid))),
+      bytes: vi.fn((oid: string, offset: number, maxBytes: number) => {
+        const object = objects.get(oid)!;
+        const bytes = object.bytes.slice(offset, offset + maxBytes);
+        const nextOffset = offset + bytes.length;
+        reads.push({ oid, offset, maxBytes, length: bytes.length });
+        return Effect.succeed({
+          _tag: nextOffset === object.bytes.length ? ("complete" as const) : ("more" as const),
+          bytes,
+          nextOffset,
+        });
+      }),
+    },
+  } satisfies Pick<DriveReader, "searchTreeOf" | "metadata" | "sizes">;
+  const readFiles = () =>
+    reader.metadata.bytes.mock.calls.flatMap(([oid]) =>
+      objects.get(oid)?.kind === "blob" ? [aliases.get(oid)!] : [],
+    );
+  return { reader, root, sizes, readFiles, reads };
+}
+
 function fixture(files: Record<string, FixtureFile>) {
   const trees = new Map<string, TreeEntry[]>([["root", []]]);
-  const blobs = new Map<string, Bytes>();
+  const objects = new Map<string, { bytes: Bytes; kind: "tree" | "blob" }>();
   const sizes = new Map<string, number | null>();
+  const ids = new Map<string, string>();
+  const aliases = new Map<string, string>();
+  const objectId = (alias: string) => {
+    let oid = ids.get(alias);
+    if (oid === undefined) {
+      oid = fixtureId(ids.size + 1);
+      ids.set(alias, oid);
+      aliases.set(oid, alias);
+    }
+    return oid;
+  };
+  const root = objectId("root");
   for (const [path, value] of Object.entries(files)) {
     const parts = path.split("/");
     let tree = "root";
@@ -37,45 +127,92 @@ function fixture(files: Record<string, FixtureFile>) {
       const child = `${tree}/${part}`;
       if (!trees.has(child)) {
         trees.set(child, []);
-        trees.get(tree)!.push({ name: part, kind: "directory", mode: "40000", oid: child });
+        trees
+          .get(tree)!
+          .push({ name: part, kind: "directory", mode: "40000", oid: objectId(child) });
       }
       tree = child;
     }
     const file = typeof value === "string" ? { contents: value } : value;
-    const oid = `blob:${path}`;
+    const oid = objectId(`blob:${path}`);
     const bytes = typeof file.contents === "string" ? encoder.encode(file.contents) : file.contents;
-    blobs.set(oid, bytes);
+    objects.set(oid, { bytes, kind: "blob" });
     sizes.set(oid, file.size === undefined ? bytes.length : file.size);
-    trees.get(tree)!.push({ name: parts.at(-1)!, kind: file.kind ?? "file", mode: "100644", oid });
+    const kind = file.kind ?? "file";
+    const mode = {
+      file: "100644",
+      executable: "100755",
+      symlink: "120000",
+      submodule: "160000",
+      directory: "40000",
+    }[kind];
+    trees.get(tree)!.push({ name: parts.at(-1)!, kind, mode, oid });
   }
-  for (const [oid, entries] of trees)
-    sizes.set(
-      oid,
-      Math.max(
-        1,
-        entries.reduce((total, entry) => total + entry.name.length + 22, 0),
-      ),
-    );
-  const reader = {
-    treeOf: vi.fn((_commit: string | null) => Effect.succeed("root")),
-    tree: vi.fn((oid: string) => Effect.succeed(trees.get(oid) ?? [])),
-    blob: vi.fn((oid: string) => Effect.succeed(blobs.get(oid)!)),
-    sizes: vi.fn((oids: ReadonlyArray<string>) =>
-      Effect.succeed(new Map(oids.map((oid) => [oid, sizes.get(oid) ?? null]))),
-    ),
-  } satisfies Pick<DriveReader, "treeOf" | "tree" | "blob" | "sizes">;
-  return { reader, blobs, sizes };
+  for (const [alias, entries] of trees) {
+    const chunks = entries.map((entry) => {
+      const header = encoder.encode(`${entry.mode} ${entry.name}\0`);
+      const bytes = new Uint8Array(header.length + 20);
+      bytes.set(header);
+      for (let index = 0; index < 20; index++)
+        bytes[header.length + index] = Number.parseInt(
+          entry.oid.slice(index * 2, index * 2 + 2),
+          16,
+        );
+      return bytes;
+    });
+    const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    const oid = objectId(alias);
+    objects.set(oid, { bytes, kind: "tree" });
+    sizes.set(oid, bytes.length);
+  }
+  return metadataFixture(objects, root, aliases, sizes);
 }
 
 const decodeState = Schema.decodeSync(Schema.fromJsonString(DriveContentScanState));
 const encodeState = Schema.encodeSync(Schema.fromJsonString(DriveContentScanState));
 const roundTrip = (state: DriveContentScanState) => decodeState(encodeState(state));
 
+const drain = (
+  test: ReturnType<typeof metadataFixture>,
+  budget: DriveContentScanBudget = {},
+  maxPages = 5000,
+) =>
+  Effect.gen(function* () {
+    let state: DriveContentScanState | null = null;
+    const matches = [];
+    let largestState = 0;
+    let resumedIgnore = false;
+    for (let page = 1; page <= maxPages; page++) {
+      const readFrom = test.reads.length;
+      const result = yield* scanDriveContents(test.reader, "commit", input, state, budget);
+      const reads = test.reads.slice(readFrom);
+      expect(reads.every((read) => read.maxBytes <= 64 * 1024)).toBe(true);
+      expect(reads.reduce((total, read) => total + read.length, 0)).toBeLessThanOrEqual(
+        budget.bytes ?? 12 * 1024 * 1024,
+      );
+      matches.push(...result.matches);
+      if (result.nextState === undefined)
+        return { matches, pages: page, truncated: result.truncated, largestState, resumedIgnore };
+      expect(result.truncated).toBe(true);
+      largestState = Math.max(largestState, encoder.encode(encodeState(result.nextState)).length);
+      resumedIgnore ||=
+        result.nextState.candidate?.evaluation !== null &&
+        result.nextState.candidate?.evaluation !== undefined;
+      state = roundTrip(result.nextState);
+    }
+    return yield* Effect.die("The search did not finish within its fixture page budget.");
+  });
+
 describe("immutable drive content pages", () => {
   it.effect("reads an empty drive without requiring a stored empty-tree object", () =>
     Effect.gen(function* () {
       const { reader } = fixture({});
-      reader.treeOf.mockReturnValue(Effect.succeed(EMPTY_TREE));
+      reader.searchTreeOf.mockReturnValue(Effect.succeed({ ready: true, tree: EMPTY_TREE }));
       const result = yield* scanDriveContents(reader, null, input);
       expect(result).toEqual({ matches: [], truncated: false });
       expect(reader.sizes).not.toHaveBeenCalled();
@@ -210,7 +347,7 @@ describe("immutable drive content pages", () => {
         state = roundTrip(result.nextState);
       }
       expect(lines).toEqual([1, 3, 5]);
-      expect(reader.treeOf).toHaveBeenCalledTimes(1);
+      expect(reader.searchTreeOf).toHaveBeenCalledTimes(1);
     }),
   );
 
@@ -297,7 +434,7 @@ describe("immutable drive content pages", () => {
         ["later.txt", 1],
       ]);
       expect(second.nextState?.commit).toBe("old");
-      expect(reader.treeOf).toHaveBeenCalledTimes(1);
+      expect(reader.searchTreeOf).toHaveBeenCalledTimes(1);
       expect(JSON.stringify(first.nextState)).toBe(original);
     }),
   );
@@ -307,7 +444,7 @@ describe("immutable drive content pages", () => {
       const { reader } = fixture({ "a.txt": "no", "b.txt": "no", "nested/late.txt": "needle" });
       let state: DriveContentScanState | null = null;
       const matches = [];
-      for (let page = 0; page < 12; page++) {
+      for (let page = 0; page < 100; page++) {
         const result = yield* scanDriveContents(reader, "commit", input, state, { entries: 1 });
         matches.push(...result.matches);
         if (result.nextState === undefined) {
@@ -318,7 +455,7 @@ describe("immutable drive content pages", () => {
         state = roundTrip(result.nextState);
       }
       expect(matches.map((match) => match.path)).toEqual(["nested/late.txt"]);
-      expect(reader.treeOf).toHaveBeenCalledTimes(1);
+      expect(reader.searchTreeOf).toHaveBeenCalledTimes(1);
     }),
   );
 
@@ -334,7 +471,7 @@ describe("immutable drive content pages", () => {
       let state: DriveContentScanState | null = null;
       const found: string[] = [];
       let complete = false;
-      for (let page = 0; page < 30; page++) {
+      for (let page = 0; page < 100; page++) {
         const result = yield* scanDriveContents(reader, "commit", input, state, { entries: 2_000 });
         found.push(...result.matches.map((match) => match.path));
         if (result.nextState === undefined) {
@@ -345,21 +482,18 @@ describe("immutable drive content pages", () => {
       }
       expect(complete).toBe(true);
       expect(found).toEqual(["file-25009.txt"]);
-      expect(reader.treeOf).toHaveBeenCalledTimes(1);
+      expect(reader.searchTreeOf).toHaveBeenCalledTimes(1);
     }),
   );
 
-  it.effect("counts trees in the byte budget and resumes without skipping deferred blobs", () =>
+  it.effect("charges both tree passes and resumes without skipping deferred files", () =>
     Effect.gen(function* () {
-      const { reader } = fixture({ "a.txt": "needle", "b.txt": "needle" });
-      const first = yield* scanDriveContents(reader, "commit", input, null, { bytes: 60 });
-      expect(first.matches.map((match) => match.path)).toEqual(["a.txt"]);
-      expect(reader.blob).toHaveBeenCalledTimes(1);
-      const second = yield* scanDriveContents(reader, "commit", input, first.nextState!, {
-        bytes: 60,
-      });
-      expect(second.matches.map((match) => match.path)).toEqual(["b.txt"]);
-      expect(second.nextState).toBeUndefined();
+      const test = fixture({ "a.txt": "needle", "b.txt": "needle" });
+      const result = yield* drain(test, { bytes: 60 }, 100);
+      expect(result.pages).toBeGreaterThan(2);
+      expect(result.matches.map((match) => match.path)).toEqual(["a.txt", "b.txt"]);
+      expect(result.truncated).toBe(false);
+      expect(test.readFiles()).toEqual(["blob:a.txt", "blob:b.txt"]);
     }),
   );
 
@@ -391,8 +525,8 @@ describe("immutable drive content pages", () => {
 
   it.effect("saves ignore object ids before deferring their reads behind a full tree budget", () =>
     Effect.gen(function* () {
-      const { reader, sizes } = fixture({ ".gitignore": "skip\n", "keep.txt": "needle" });
-      const byteLimit = sizes.get("root")!;
+      const { reader, sizes, root } = fixture({ ".gitignore": "skip\n", "keep.txt": "needle" });
+      const byteLimit = sizes.get(root)!;
       let state: DriveContentScanState | null = null;
       const paths: string[] = [];
       let complete = false;
@@ -409,13 +543,13 @@ describe("immutable drive content pages", () => {
       }
       expect(complete).toBe(true);
       expect(paths).toEqual(["keep.txt"]);
-      expect(reader.treeOf).toHaveBeenCalledTimes(1);
+      expect(reader.searchTreeOf).toHaveBeenCalledTimes(1);
     }),
   );
 
   it.effect("honors nested ignore rules, .ignore precedence, negation, and directory pruning", () =>
     Effect.gen(function* () {
-      const { reader } = fixture({
+      const { reader, readFiles } = fixture({
         ".gitignore": "*.log\nblocked/\n*.txt\n",
         ".ignore": "!keep.txt\nprotected.txt\n",
         "keep.txt": "needle",
@@ -435,7 +569,7 @@ describe("immutable drive content pages", () => {
         "nested/open.txt",
         "nested/protected.txt",
       ]);
-      expect(reader.blob.mock.calls.map(([oid]) => oid)).not.toContain("blob:blocked/.gitignore");
+      expect(readFiles()).not.toContain("blob:blocked/.gitignore");
       expect(result.truncated).toBe(false);
     }),
   );
@@ -459,7 +593,7 @@ describe("immutable drive content pages", () => {
   it.effect("keeps admitted parents open when resolving a child's direct ignore rules", () =>
     Effect.gen(function* () {
       for (const name of ["folder", "folder [a]*?#!\\"]) {
-        const { reader } = fixture({
+        const { reader, readFiles } = fixture({
           ".gitignore": "folder*/\n*.log\n",
           "nested/.gitignore": "!folder*/\n",
           [`nested/${name}/keep.txt`]: "needle",
@@ -467,9 +601,7 @@ describe("immutable drive content pages", () => {
         });
         const result = yield* scanDriveContents(reader, "commit", input);
         expect(result.matches.map((match) => match.path)).toEqual([`nested/${name}/keep.txt`]);
-        expect(reader.blob.mock.calls.map(([oid]) => oid)).not.toContain(
-          `blob:nested/${name}/skip.log`,
-        );
+        expect(readFiles()).not.toContain(`blob:nested/${name}/skip.log`);
       }
     }),
   );
@@ -478,7 +610,7 @@ describe("immutable drive content pages", () => {
     "excludes binary, oversized, symlink and submodule content without fetching oversized objects",
     () =>
       Effect.gen(function* () {
-        const { reader } = fixture({
+        const { reader, readFiles } = fixture({
           "binary.txt": `${"x".repeat(9000)}\0needle`,
           "huge.txt": { contents: "needle", size: 10 * 1024 * 1024 + 1 },
           link: { contents: "needle", kind: "symlink" },
@@ -488,10 +620,7 @@ describe("immutable drive content pages", () => {
         });
         const result = yield* scanDriveContents(reader, "commit", input);
         expect(result.matches.map((match) => match.path)).toEqual(["regular.txt"]);
-        expect(reader.blob.mock.calls.map(([oid]) => oid)).toEqual([
-          "blob:binary.txt",
-          "blob:regular.txt",
-        ]);
+        expect(readFiles()).toEqual(["blob:binary.txt", "blob:regular.txt"]);
         expect(result.truncated).toBe(false);
       }),
   );
@@ -514,31 +643,33 @@ describe("immutable drive content pages", () => {
     }),
   );
 
-  it.effect("keeps truncation honest after the per-file cap and unknown object sizes", () =>
-    Effect.gen(function* () {
-      const { reader } = fixture({
-        "dense.txt": "needle\n".repeat(101),
-        "unknown.txt": { contents: "needle", size: null },
-        "other.txt": "needle",
-      });
-      const result = yield* scanDriveContents(reader, "commit", input);
-      expect(result.matches.filter((match) => match.path === "dense.txt")).toHaveLength(100);
-      expect(result.matches.at(-1)?.path).toBe("other.txt");
-      expect(result.truncated).toBe(true);
-      expect(result.nextState).toBeUndefined();
-      expect(reader.blob.mock.calls.map(([oid]) => oid)).not.toContain("blob:unknown.txt");
-      const first = yield* scanDriveContents(reader, "commit", { ...input, limit: 60 });
-      const second = yield* scanDriveContents(
-        reader,
-        "commit",
-        { ...input, limit: 60 },
-        roundTrip(first.nextState!),
-      );
-      expect(
-        [...first.matches, ...second.matches].filter((match) => match.path === "dense.txt"),
-      ).toHaveLength(100);
-      expect(second.truncated).toBe(true);
-    }),
+  it.effect(
+    "keeps truncation honest after the per-file cap while searching hydrated unknown-size files",
+    () =>
+      Effect.gen(function* () {
+        const { reader, readFiles } = fixture({
+          "dense.txt": "needle\n".repeat(101),
+          "unknown.txt": { contents: "needle", size: null },
+          "other.txt": "needle",
+        });
+        const result = yield* scanDriveContents(reader, "commit", input);
+        expect(result.matches.filter((match) => match.path === "dense.txt")).toHaveLength(100);
+        expect(result.matches.at(-1)?.path).toBe("other.txt");
+        expect(result.truncated).toBe(true);
+        expect(result.nextState).toBeUndefined();
+        expect(readFiles()).toContain("blob:unknown.txt");
+        const first = yield* scanDriveContents(reader, "commit", { ...input, limit: 60 });
+        const second = yield* scanDriveContents(
+          reader,
+          "commit",
+          { ...input, limit: 60 },
+          roundTrip(first.nextState!),
+        );
+        expect(
+          [...first.matches, ...second.matches].filter((match) => match.path === "dense.txt"),
+        ).toHaveLength(100);
+        expect(second.truncated).toBe(true);
+      }),
   );
 
   it.effect(
@@ -564,7 +695,7 @@ describe("immutable drive content pages", () => {
 
   it.effect("prunes excluded shortcut paths before reading blobs", () =>
     Effect.gen(function* () {
-      const { reader } = fixture({
+      const { reader, readFiles } = fixture({
         "shared/hidden.txt": "needle",
         "same.txt": "needle",
         "keep.txt": "needle",
@@ -573,33 +704,91 @@ describe("immutable drive content pages", () => {
         excludePaths: ["shared", "same.txt"],
       });
       expect(result.matches.map((match) => match.path)).toEqual(["keep.txt"]);
-      expect(reader.blob.mock.calls.map(([oid]) => oid)).toEqual(["blob:keep.txt"]);
+      expect(readFiles()).toEqual(["blob:keep.txt"]);
     }),
   );
 
-  it.effect("rejects ignore rules it cannot read within its bounds", () =>
+  it.effect("streams an ignore rule above 64 KiB without dropping the excluded subtree", () =>
     Effect.gen(function* () {
-      for (const size of [null, 64 * 1024 + 1]) {
-        const { reader } = fixture({
-          ".gitignore": { contents: "secret/", size },
-          "secret/file.txt": "needle",
-        });
-        const error = yield* Effect.flip(scanDriveContents(reader, "commit", input));
-        expect(error._tag).toBe("DriveReadError");
-        expect(reader.blob).not.toHaveBeenCalled();
-      }
+      const test = fixture({
+        ".gitignore": { contents: `${"s".repeat(70 * 1024)}\nsecret/\n`, size: null },
+        "secret/file.txt": "needle",
+        "keep.txt": "needle",
+      });
+      const result = yield* drain(test, { entries: 3, bytes: 128 * 1024 }, 100);
+      expect(result.matches.map((match) => match.path)).toEqual(["keep.txt"]);
+      expect(result.resumedIgnore).toBe(true);
+      expect(result.largestState).toBeLessThan(16 * 1024);
+      expect(result.truncated).toBe(false);
+      expect(test.readFiles()).not.toContain("blob:secret/file.txt");
     }),
   );
 
-  it.effect("rejects directory trees with unknown or excessive sizes before reading them", () =>
+  it.effect("walks nested ignore sources beyond 512 KiB without accumulating their text", () =>
     Effect.gen(function* () {
-      for (const size of [null, 10 * 1024 * 1024 + 1]) {
-        const { reader, sizes } = fixture({ "file.txt": "needle" });
-        sizes.set("root", size);
-        const error = yield* Effect.flip(scanDriveContents(reader, "commit", input));
-        expect(error._tag).toBe("DriveReadError");
-        expect(reader.tree).not.toHaveBeenCalled();
+      const files: Record<string, FixtureFile> = {};
+      const rules = `${"z".repeat(70 * 1024)}\n`;
+      let prefix = "";
+      for (let depth = 0; depth < 8; depth++) {
+        files[`${prefix}.gitignore`] = `${rules}${depth === 0 ? "blocked.txt\n" : ""}`;
+        prefix += `nested-${depth}/`;
       }
+      files[`${prefix}keep.txt`] = "needle";
+      files[`${prefix}blocked.txt`] = "needle";
+      expect(encoder.encode(rules).length * 8).toBeGreaterThan(512 * 1024);
+      const test = fixture(files);
+      const result = yield* drain(test, { entries: 8, bytes: 128 * 1024 }, 1000);
+      expect(result.matches.map((match) => match.path)).toEqual([`${prefix}keep.txt`]);
+      expect(result.resumedIgnore).toBe(true);
+      expect(result.largestState).toBeLessThan(16 * 1024);
+      expect(result.truncated).toBe(false);
+      expect(test.readFiles()).not.toContain(`blob:${prefix}blocked.txt`);
+    }),
+  );
+
+  it.effect("searches a real Git tree above 10 MiB through bounded cold pages", () =>
+    Effect.gen(function* () {
+      const count = 180_000;
+      const root = fixtureId(1);
+      const blob = fixtureId(2);
+      const nameFor = (index: number) =>
+        `entry-${String(index).padStart(6, "0")}-long-tree-file.txt`;
+      const header = encoder.encode(`160000 ${nameFor(0)}\0`);
+      const entryBytes = header.length + 20;
+      const tree = new Uint8Array(entryBytes * count);
+      for (let index = 0; index < count; index++) {
+        const offset = index * entryBytes;
+        tree.set(
+          encoder.encode(`${index === count - 1 ? "100644" : "160000"} ${nameFor(index)}\0`),
+          offset,
+        );
+        tree[offset + entryBytes - 1] = 2;
+      }
+      expect(tree.length).toBeGreaterThan(10 * 1024 * 1024);
+      const test = metadataFixture(
+        new Map([
+          [root, { bytes: tree, kind: "tree" as const }],
+          [blob, { bytes: encoder.encode("needle"), kind: "blob" as const }],
+        ]),
+        root,
+        new Map([[blob, "blob:late.txt"]]),
+      );
+      const result = yield* drain(test, { entries: 2000, bytes: 256 * 1024 }, 2000);
+      expect(result.matches.map((match) => match.path)).toEqual([nameFor(count - 1)]);
+      expect(result.pages).toBeGreaterThan(100);
+      expect(result.largestState).toBeLessThan(2048);
+      expect(result.truncated).toBe(false);
+      expect(test.reader.searchTreeOf).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("uses hydrated tree metadata even when its recorded object size is unknown", () =>
+    Effect.gen(function* () {
+      const test = fixture({ "file.txt": "needle" });
+      test.sizes.set(test.root, null);
+      const result = yield* drain(test, { entries: 2, bytes: 64 });
+      expect(result.matches.map((match) => match.path)).toEqual(["file.txt"]);
+      expect(result.truncated).toBe(false);
     }),
   );
 });

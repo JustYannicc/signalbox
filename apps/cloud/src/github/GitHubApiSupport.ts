@@ -5,6 +5,7 @@ export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError"
   /** HTTP status, or 0 when no answer arrived. */
   status: Schema.Number,
   message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
   /** The protocol used for the request that produced this answer. */
   requestKind: Schema.optional(Schema.Literals(["rest", "graphql", "git"])),
   /** A short, sanitized excerpt of the response body, when an answer arrived. */

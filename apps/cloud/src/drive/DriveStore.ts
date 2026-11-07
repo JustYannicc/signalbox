@@ -25,12 +25,13 @@ import * as Migrations from "../storage/migrations.ts";
 import { canWrite } from "./driveAccess.ts";
 import * as DriveEvents from "./DriveEvents.ts";
 import * as DriveMembers from "./DriveMembers.ts";
+import * as DriveMetadata from "./DriveMetadata.ts";
 import * as DrivePullStore from "./DrivePullStore.ts";
 import * as DriveRevisions from "./DriveRevisions.ts";
 import * as DriveRevisionStore from "./DriveRevisionStore.ts";
 import * as DriveRepositoryPublication from "./DriveRepositoryPublication.ts";
 import * as DriveHistory from "./DriveHistory.ts";
-import { isWithin } from "./DriveReader.ts";
+import { isWithin } from "@signalbox/runner-protocol/drivePaths";
 import type { ObjectType, Oid } from "./git/gitObjects.ts";
 
 export type {
@@ -434,6 +435,7 @@ const migrations = Migrator.fromRecord({
   "0010_shared_history_packs": DriveHistory.createTables,
   "0011_drive_publication_creation_attempts": DriveRepositoryPublication.addCreationAttempts,
   "0011_shared_history_transfers": DriveHistory.createTransferTables,
+  "0012_drive_metadata": DriveMetadata.createTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -1164,4 +1166,5 @@ export const layer = (driveId: string) =>
   Layer.effect(DriveStore, make(driveId)).pipe(
     Layer.provideMerge(DriveEvents.layer(driveId)),
     Layer.provideMerge(DriveMembers.layer(driveId)),
+    Layer.provideMerge(DriveMetadata.layer),
   );

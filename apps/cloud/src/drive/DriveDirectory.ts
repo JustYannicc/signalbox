@@ -14,6 +14,13 @@ import type {
 } from "./DriveHistory.ts";
 import type { AccessDelivery, DrivePerson, MembershipChange } from "./DriveMembers.ts";
 import type {
+  MetadataAdvance,
+  MetadataAdvanceResult,
+  MetadataBytes,
+  MetadataSource,
+  MetadataState,
+} from "./DriveMetadata.ts";
+import type {
   DriveWriter,
   CheckpointOperationResult,
   ForkCheckpointRequest,
@@ -108,6 +115,10 @@ export interface DriveObjectApi {
   ) => Promise<RefWrite>;
   readonly locate: (oids: ReadonlyArray<Oid>) => Promise<ReadonlyArray<ObjectLocation>>;
   readonly locateAt: (pack: string, offset: number) => Promise<ObjectLocation | null>;
+  readonly metadataBegin: (oid: Oid, source: MetadataSource) => Promise<MetadataState>;
+  readonly metadataStatus: (oid: Oid) => Promise<MetadataState | null>;
+  readonly metadataAdvance: (input: MetadataAdvance) => Promise<MetadataAdvanceResult>;
+  readonly metadataBytes: (oid: Oid, offset: number, maxBytes: number) => Promise<MetadataBytes>;
   readonly commits: (oids: ReadonlyArray<Oid>) => Promise<ReadonlyArray<StoredCommit>>;
   readonly log: (from: Oid, limit: number) => Promise<ReadonlyArray<StoredCommit>>;
   readonly replaceMain: (
@@ -219,6 +230,10 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     mirror: wrap("mirror"),
     locate: wrap("locate"),
     locateAt: wrap("locateAt"),
+    metadataBegin: wrap("metadataBegin"),
+    metadataStatus: wrap("metadataStatus"),
+    metadataAdvance: wrap("metadataAdvance"),
+    metadataBytes: wrap("metadataBytes"),
     commits: wrap("commits"),
     log: wrap("log"),
     replaceMain: wrap("replaceMain"),

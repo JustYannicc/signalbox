@@ -202,6 +202,22 @@ export class DriveObject extends DurableObject<DriveObjectEnv> implements DriveO
     return this.api.locateAt(...args);
   }
 
+  metadataBegin(...args: Parameters<DriveObjectApi["metadataBegin"]>) {
+    return this.api.metadataBegin(...args);
+  }
+
+  metadataStatus(...args: Parameters<DriveObjectApi["metadataStatus"]>) {
+    return this.api.metadataStatus(...args);
+  }
+
+  metadataAdvance(...args: Parameters<DriveObjectApi["metadataAdvance"]>) {
+    return this.api.metadataAdvance(...args);
+  }
+
+  metadataBytes(...args: Parameters<DriveObjectApi["metadataBytes"]>) {
+    return this.api.metadataBytes(...args);
+  }
+
   commits(...args: Parameters<DriveObjectApi["commits"]>) {
     return this.api.commits(...args);
   }

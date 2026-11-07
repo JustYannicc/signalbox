@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import { DriveDirectory, type DriveObjectError } from "./DriveDirectory.ts";
 import { type DrivePackError, DrivePacks } from "./DrivePacks.ts";
+import { makeDriveHydration, type HydrationRemote } from "./DriveHydration.ts";
 import { filePatch, MAX_DIFF_BYTES } from "./drivePatch.ts";
 import type { ObjectLocation } from "./DriveStore.ts";
 import {
@@ -34,10 +35,12 @@ import type { Bytes } from "./git/gitObjects.ts";
 export interface RemoteFiles {
   /** The file's bytes, or null when the remote doesn't answer with them. */
   readonly blob: (oid: Oid) => Effect.Effect<Bytes | null, DriveReadError>;
+  readonly range?: HydrationRemote;
 }
 
 export class DriveReadError extends Schema.TaggedError<DriveReadError>()("DriveReadError", {
   message: Schema.String,
+  cause: Schema.optionalKey(Schema.Defect()),
 }) {}
 
 type ReadFailure = DriveReadError | DriveObjectError | DrivePackError;
@@ -87,6 +90,17 @@ export const makeDriveReader = Effect.fn("makeDriveReader")(function* (
 ) {
   const drive = (yield* DriveDirectory).forDrive(driveId);
   const packs = yield* DrivePacks;
+  const hydration = yield* makeDriveHydration(driveId, remote?.range);
+  const metadataError = <A, E>(effect: Effect.Effect<A, E>) =>
+    effect.pipe(
+      Effect.mapError(
+        (cause) =>
+          new DriveReadError({
+            message: "The drive's search metadata could not be read.",
+            cause,
+          }),
+      ),
+    );
 
   /** One object at its span of a pack, following delta bases within that pack. */
   const readAt = (location: ObjectLocation, depth = 0): Effect.Effect<GitObject, ReadFailure> =>
@@ -245,6 +259,24 @@ export const makeDriveReader = Effect.fn("makeDriveReader")(function* (
   const treeOf = (oid: Oid | null) =>
     oid === null ? Effect.succeed(EMPTY_TREE) : Effect.map(commit(oid), (found) => found.tree);
 
+  const searchTreeOf = (oid: Oid | null) =>
+    Effect.gen(function* () {
+      if (oid === null) return { ready: true, tree: EMPTY_TREE } as const;
+      const indexed = (yield* drive.commits([oid]))[0];
+      if (indexed !== undefined) return { ready: true, tree: indexed.tree } as const;
+      const prepared = yield* metadataError(hydration.step(oid));
+      if (prepared.kind !== "commit") {
+        return yield* new DriveReadError({ message: "The search ref does not identify a commit." });
+      }
+      if (!prepared.complete) return { ready: false } as const;
+      const header = yield* metadataError(hydration.bytes(oid, 0, 64));
+      const line = new TextDecoder().decode(header.bytes).split("\n", 1)[0]!;
+      if (!/^tree [0-9a-f]{40}$/u.test(line)) {
+        return yield* new DriveReadError({ message: "The search commit has no directory tree." });
+      }
+      return { ready: true, tree: line.slice(5) } as const;
+    });
+
   /**
    * Each changed file's `git diff --patch` from commit `from` (null: nothing)
    * to commit `to`, by path; only `paths` when given. Unchanged files are left out.
@@ -304,9 +336,16 @@ export const makeDriveReader = Effect.fn("makeDriveReader")(function* (
     files,
     changes,
     treeOf,
+    searchTreeOf,
     patches,
     diff,
     drive,
+    metadata: {
+      prepare: (oid: Oid) => metadataError(hydration.step(oid)),
+      bytes: (oid: Oid, offset: number, maxBytes: number) =>
+        metadataError(hydration.bytes(oid, offset, maxBytes)),
+      status: (oid: Oid) => metadataError(drive.metadataStatus(oid)),
+    },
   };
 });
 
