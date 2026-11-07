@@ -420,6 +420,7 @@ function makeFixture(hooks: Hooks = {}) {
     machine: () => ({
       files,
       async spawn() {
+        await files.markExecuted(state.generation!);
         if (state.pristine) throw new Error("Machine was not marked dirty before route start");
         leaseHeld = true;
         routeActive = true;

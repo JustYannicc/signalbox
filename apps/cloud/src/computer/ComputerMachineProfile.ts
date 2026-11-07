@@ -10,6 +10,7 @@ export function createComputerMachineProfile(options: {
   readonly filesystem: KernelFileSystem;
   readonly threadId: string;
   readonly machineInventory: MachineProgramInventory;
+  /** Owns the durable dirty transition before sending a native process start. */
   readonly transport: KernelCommandForwarder & { readonly files: MachineFilesPort };
   readonly signal: AbortSignal;
   /** Counts and durations only; a machine command can keep the CLI's view re-indexing. */
@@ -106,7 +107,8 @@ export function createComputerMachineProfile(options: {
       overlay.invalidate();
       try {
         const previousGeneration = transport.files.current().generation;
-        if (previousGeneration !== null) await transport.files.markExecuted(previousGeneration);
+        // The transport persists its dirty transition just before native execution. Doing it
+        // here would revoke the image even when no Runner can accept the command.
         const child = await transport.spawn(command, callerSignal);
         const generation = child.generation ?? previousGeneration;
         const exited = child.exited.then(
