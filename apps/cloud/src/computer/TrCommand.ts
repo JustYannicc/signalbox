@@ -25,6 +25,8 @@ export function qualifyTrCommand(command: KernelCommand): GnuCommandQualificatio
   const operands: string[] = [];
   let options = true;
   for (const arg of command.argv.slice(1)) {
+    if (arg === "--" && operands.length > 0)
+      return machine("unqualified-option", "tr '--' after SET1 needs GNU operand parsing");
     if (options && arg === "--") {
       options = false;
       continue;

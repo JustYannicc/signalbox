@@ -3,7 +3,10 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeProcess from "node:process";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { KERNEL_BUSYBOX_ARTIFACT } from "../../kernel/KernelBusyboxProgram.ts";
+import {
+  KERNEL_BUSYBOX_ARTIFACT,
+  createKernelBusyboxProgram,
+} from "../../kernel/KernelBusyboxProgram.ts";
 import type { KernelBusyboxPort } from "../../kernel/KernelBusyboxPort.ts";
 import { createChildBusybox } from "../ChildBusybox.ts";
 import { qualifyTrCommand } from "../TrCommand.ts";
@@ -12,8 +15,8 @@ import {
   commandProgramCodes,
   readAll,
 } from "./CommandGatewayAdmissionFixture.ts";
-import { exited } from "./ChildBusyboxFixture.ts";
-import { trVectors } from "./TrVectors.fixture.ts";
+import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
+import { trMachineVectors, trVectors } from "./TrVectors.fixture.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 const artifact =
@@ -47,6 +50,44 @@ if (available) {
 }
 
 describe.skipIf(!available)("BusyBox tr through the public catalog", () => {
+  it.each(trMachineVectors)("keeps the GNU mismatch for $args on the machine", async (vector) => {
+    const command = {
+      executable: "/usr/bin/tr",
+      argv: ["tr", ...vector.args],
+      cwd: "/workspace",
+      env: { LC_ALL: "C" },
+    };
+    const raw = childBusyboxFixture({
+      args: command.argv,
+      env: command.env,
+      stdin: new TextEncoder().encode(vector.input),
+    });
+    try {
+      const result = await createKernelBusyboxProgram({ module }).run(raw.context);
+      const actual = { stdout: new TextDecoder().decode(raw.stdout()), exitCode: result.exitCode };
+      expect(actual).toEqual(vector.busybox);
+      expect(actual).not.toEqual(vector.gnu);
+    } finally {
+      await raw.close();
+    }
+    const fixture = commandGatewayFixture({
+      run: async () => {
+        throw new Error("GNU-incompatible tr reached the isolate");
+      },
+    });
+    try {
+      expect(qualifyTrCommand(command)).toMatchObject({ kind: "machine" });
+      const child = await fixture.gateway.exec(command, fixture.controller.signal, undefined);
+      await child.exited;
+      await child.dispose();
+      expect(fixture.machineSpawn).toHaveBeenCalledExactlyOnceWith(
+        command,
+        expect.any(AbortSignal),
+      );
+    } finally {
+      await fixture.close();
+    }
+  });
   it.each(trVectors)("matches GNU coreutils for $args", async ({ args, expectedHex }) => {
     const base = commandProgramCodes();
     const fixture = commandGatewayFixture({

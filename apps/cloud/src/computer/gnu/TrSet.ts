@@ -68,6 +68,8 @@ function token(set: string, index: number): Token | undefined {
     const octal = /^[0-7]{1,3}/.exec(set.slice(index + 1))?.[0];
     if (octal === undefined) return undefined;
     const byte = Number.parseInt(octal, 8);
+    // BusyBox decodes escapes before recognizing set constructs; GNU parses them first.
+    if ("[:=*]".includes(String.fromCharCode(byte))) return undefined;
     return byte <= 255 ? { end: index + 1 + octal.length, value: byte } : undefined;
   }
   const code = value.charCodeAt(0);

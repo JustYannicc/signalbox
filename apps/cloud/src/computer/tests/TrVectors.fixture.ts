@@ -152,3 +152,19 @@ export const trVectors = [
       "7a4142434445464748494a4b4c4d4e4f505152535455565758595a7a6162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a7a6162636465666768696a6b6c6d6e6f707172737475767778797a",
   },
 ] as const;
+
+// These GNU coreutils 9.12 C-locale results differ from the pinned BusyBox applet.
+export const trMachineVectors = [
+  {
+    args: ["abc", "\\133:upper:]"],
+    input: "abc",
+    gnu: { stdout: "[:u", exitCode: 0 },
+    busybox: { stdout: "ABC", exitCode: 0 },
+  },
+  {
+    args: ["-d", "a", "--"],
+    input: "ab",
+    gnu: { stdout: "", exitCode: 1 },
+    busybox: { stdout: "b", exitCode: 0 },
+  },
+] as const;

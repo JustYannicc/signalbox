@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { qualifyTrCommand } from "../TrCommand.ts";
+import { trMachineVectors } from "./TrVectors.fixture.ts";
 const command = (argv: readonly string[], env = { LC_ALL: "C" }) => ({
   executable: "/bin/tr",
   argv: ["tr", ...argv],
@@ -8,6 +9,15 @@ const command = (argv: readonly string[], env = { LC_ALL: "C" }) => ({
 });
 
 describe("BusyBox tr qualification", () => {
+  it.each(trMachineVectors)("forwards the GNU-incompatible vector $args", ({ args }) => {
+    expect(qualifyTrCommand(command(args))).toMatchObject({ kind: "machine" });
+  });
+  it.each(["\\133", "\\072", "\\075", "\\052", "\\135"])("forwards escaped set syntax %s", (set) =>
+    expect(qualifyTrCommand(command(["-d", set]))).toMatchObject({ kind: "machine" }),
+  );
+  it("forwards a late operand delimiter after an initial option delimiter", () => {
+    expect(qualifyTrCommand(command(["-d", "--", "a", "--"]))).toMatchObject({ kind: "machine" });
+  });
   it("forwards an overridden multicall entry", () =>
     expect(qualifyTrCommand({ ...command(["-d", "x"]), argv: ["other", "-d", "x"] })).toMatchObject(
       { kind: "machine" },
