@@ -150,6 +150,7 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
     try {
       if (
         this.#launched ||
+        this.#disposed !== undefined ||
         this.#lifetime.signal.aborted ||
         request.manifestSha256 !== this.#release.manifestSha256
       )
@@ -182,6 +183,7 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
     else await this.#reporter.releaseModuleOmitted(report.event, report.failure);
   }
   #beginOperation(id: string) {
+    if (this.#disposed !== undefined) throw new Error("Claude CLI owner closed");
     this.#lifetime.signal.throwIfAborted();
     if (this.#io.has(id)) throw new Error("Duplicate Claude I/O operation");
     const controller = new AbortController();
@@ -248,16 +250,20 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
   }
   dispose() {
     return (this.#disposed ??= (async () => {
-      this.#lifetime.abort(new Error("Claude CLI owner closed"));
-      this.#launch.reject(this.#lifetime.signal.reason);
-      // Process teardown still needs kernel streams and descriptor capabilities.
-      const settled = await Promise.allSettled([this.#process.dispose()]);
-      settled.push(...(await Promise.allSettled([this.#files.close()])));
-      this.#unsubscribe();
-      const failures = settled
-        .filter((result) => result.status === "rejected")
-        .map((result) => result.reason);
-      if (failures.length > 0) throw new AggregateError(failures, "Claude CLI cleanup failed");
+      const reason = new Error("Claude CLI owner closed");
+      this.#launch.reject(reason);
+      try {
+        // Stop the producer, then commit queued writes and close descriptors while Computer is live.
+        const settled = await Promise.allSettled([this.#process.dispose()]);
+        settled.push(...(await Promise.allSettled([this.#files.close()])));
+        const failures = settled
+          .filter((result) => result.status === "rejected")
+          .map((result) => result.reason);
+        if (failures.length > 0) throw new AggregateError(failures, "Claude CLI cleanup failed");
+      } finally {
+        this.#lifetime.abort(reason);
+        this.#unsubscribe();
+      }
     })());
   }
 }

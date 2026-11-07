@@ -225,6 +225,7 @@ export async function cliFileBackendFixture(
   });
   return {
     files,
+    processConfiguration,
     fs: createNodeFs(files.backend).fs,
     canonical,
     rootDescriptor: owner.rootDescriptor,
