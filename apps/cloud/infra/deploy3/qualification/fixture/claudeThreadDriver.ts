@@ -1,30 +1,48 @@
 import { isTerminalRunStatus, latestRun } from "@signalbox/automations/runs";
-import { CommandId, MessageId, ProjectId, type OrchestrationV2RunStatus } from "@t3tools/contracts";
+import type { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
+import {
+  CommandId,
+  defaultInstanceIdForDriver,
+  MessageId,
+  type OrchestrationV2RunStatus,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Stream from "effect/Stream";
+import { SCRATCH_PROJECT_ID } from "../../../../src/environment.ts";
 import { createWorkerdLocalClaudeThreadHost } from "../../../../src/LocalClaudeThreadHostWorkerd.ts";
-import { claudeThreadTemplate } from "./claudeThread.ts";
-import type { QualifierEnvironment } from "./environment.ts";
+import { readRpcData, rpcStubOwner } from "../../../../src/rpc/Resources.ts";
+import { CLAUDE_QUALIFICATION_PROMPTS, ClaudeQualificationModelPeer } from "./claudeModelPeer.ts";
+import { CLAUDE_THREAD_VARIANT, claudeThreadTemplate } from "./claudeThread.ts";
+import { errorRecord } from "./common.ts";
+import { proof, type QualifierEnvironment } from "./environment.ts";
+
+type ThreadEnvironment = Pick<
+  QualifierEnvironment,
+  "QUALIFIER" | "RUN_ID" | "CLAUDE_USERS" | "CLAUDE_POOLS" | "CLAUDE_THREADS"
+>;
 
 /**
  * Runs each prompt as one turn through the product's public user, pool and thread objects, the
- * way a client would, on the thread the qualifier's template turn names. A turn starts only after
- * the previous one completed.
+ * way a client would. A turn starts only after the previous one completed.
  */
 export const runClaudeThreadTurns = (input: {
-  readonly env: Pick<
-    QualifierEnvironment,
-    "QUALIFIER" | "RUN_ID" | "CLAUDE_USERS" | "CLAUDE_POOLS" | "CLAUDE_THREADS"
-  >;
+  readonly env: ThreadEnvironment;
+  readonly template: RunnerTurn;
   readonly modelTransport: (request: Request) => Promise<Response>;
   readonly prompts: readonly string[];
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const template = yield* Effect.promise(() => claudeThreadTemplate(input.env));
-      const threadId = template.threadId;
+      const threadId = input.template.threadId;
+      // A client selects the harness's own instance; the product resolves it onto a pool.
+      const modelSelection = {
+        ...input.template.modelSelection,
+        instanceId: defaultInstanceIdForDriver(input.template.providerThread.driver),
+      };
       const binding = yield* createWorkerdLocalClaudeThreadHost({
-        modelSelection: template.modelSelection,
+        modelSelection,
         modelTransport: input.modelTransport,
         machine: {
           type: "workerd",
@@ -43,7 +61,8 @@ export const runClaudeThreadTurns = (input: {
           yield* binding.launch({
             commandId: CommandId.make(id),
             threadId,
-            projectId: ProjectId.make("qualifier"),
+            // The owner's personal scratch project, which every local domain can see.
+            projectId: SCRATCH_PROJECT_ID,
             title: "Claude qualification",
             // The scripted model peer answers only qualification prompts.
             generateTitle: false,
@@ -90,3 +109,37 @@ export const runClaudeThreadTurns = (input: {
       return turns;
     }),
   );
+
+/**
+ * The qualifier's Claude step: the work prompt, then the resume prompt only if work completed,
+ * against its scripted model peer. The peer's evidence is kept whether or not a turn failed.
+ */
+export async function runQualifierClaudeThread(env: ThreadEnvironment) {
+  const cap = proof(env);
+  using _cap = rpcStubOwner(cap);
+  const inputs = await readRpcData(cap.claudeThreadInputs(CLAUDE_THREAD_VARIANT));
+  const peer = new ClaudeQualificationModelPeer(inputs.runtime.workload);
+  const prompts = [CLAUDE_QUALIFICATION_PROMPTS.work, CLAUDE_QUALIFICATION_PROMPTS.resume];
+  const exit = await Effect.runPromiseExit(
+    runClaudeThreadTurns({
+      env,
+      template: claudeThreadTemplate(inputs),
+      modelTransport: (request) => peer.fetch(request),
+      prompts,
+    }),
+  );
+  if (!Exit.isSuccess(exit))
+    return {
+      completed: false,
+      turns: [],
+      model: peer.snapshot(),
+      failure: errorRecord(Cause.squash(exit.cause)),
+    };
+  const turns = exit.value;
+  return {
+    completed:
+      turns.length === prompts.length && turns.every((turn) => turn.status === "completed"),
+    turns,
+    model: peer.snapshot(),
+  };
+}

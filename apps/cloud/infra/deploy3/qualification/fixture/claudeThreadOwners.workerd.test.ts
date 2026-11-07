@@ -34,7 +34,7 @@ interface Provisioned {
   readonly owners: Roles<Realm>;
   readonly kernelPeer: string;
   readonly calls: Roles<number>;
-  readonly tails: Roles<number>;
+  readonly tails: Roles<"qualifier-tail" | "other">;
 }
 interface Crossing {
   readonly refused: boolean;
@@ -132,7 +132,12 @@ it("opens every owner as the Claude host's own facet, each in its own isolate wi
   expect(provisioned.owners.computer.env).toEqual(["CHILD_WORKERS", "RESIDENT_BYTE_LIMIT"]);
   expect(provisioned.owners.sdk.env).toEqual(["CLAUDE_SDK_PLAN", "CLAUDE_SDK_RELEASE"]);
   expect(provisioned.calls).toEqual({ kernel: 1, cli: 1, computer: 1, sdk: 1 });
-  expect(provisioned.tails).toEqual({ kernel: 1, cli: 1, computer: 1, sdk: 1 });
+  expect(provisioned.tails).toEqual({
+    kernel: "qualifier-tail",
+    cli: "qualifier-tail",
+    computer: "qualifier-tail",
+    sdk: "qualifier-tail",
+  });
 }, 120_000);
 
 it("is refused by the platform when owner facet stubs are handed to another Worker", async () => {

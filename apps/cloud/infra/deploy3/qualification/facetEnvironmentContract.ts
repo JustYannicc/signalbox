@@ -103,29 +103,32 @@ export function qualifierFacetConfigurationSchemas<
     HARNESS_RESUME_SUPERVISOR: ports.service(["execute"]),
     PROGRAM_ASSETS: ports.assets,
   };
-  return {
-    claude: Schema.Struct({
-      ...shared,
-      ...QualifierClaudeInputs.fields,
-      CLAUDE_ACCESS: ports.service([
-        "resolveFreshAccess",
-        "resolveInitialAccess",
-        "resolveTurnAccess",
+  // What every Claude owner reads, whichever host opened it.
+  const claudeOwner = {
+    ...QualifierClaudeInputs.fields,
+    HARNESS_C_TARGET_PREPARED_RELEASE: PreparedRelease,
+    CLAUDE_ACCESS: ports.service([
+      "resolveFreshAccess",
+      "resolveInitialAccess",
+      "resolveTurnAccess",
+    ]),
+    CLAUDE_EXECUTOR: ports.service(["forward"]),
+    HARNESS_C_PRODUCT_CAPABILITIES: Schema.Struct({
+      ...capabilities,
+      [Keys.release]: ports.service([
+        ...releaseMethods,
+        "prepareClaudeIncarnation",
+        "claudeGatewayAccess",
+        "recordClaudeLoadedRelease",
+        "catalog",
+        "inventory",
       ]),
-      CLAUDE_EXECUTOR: ports.service(["forward"]),
-      HARNESS_C_PRODUCT_CAPABILITIES: Schema.Struct({
-        ...capabilities,
-        [Keys.release]: ports.service([
-          ...releaseMethods,
-          "prepareClaudeIncarnation",
-          "claudeGatewayAccess",
-          "recordClaudeLoadedRelease",
-          "catalog",
-          "inventory",
-        ]),
-        claudeContinuationPublisher: ports.service(["publishContinuation"]),
-      }),
-    }).check(resumePhase),
+      claudeContinuationPublisher: ports.service(["publishContinuation"]),
+    }),
+  };
+  return {
+    claude: Schema.Struct({ ...shared, ...claudeOwner }).check(resumePhase),
+    claudeOwner: Schema.Struct(claudeOwner),
     codex: Schema.Struct({
       ...shared,
       ...QualifierCodexInputs.fields,
@@ -142,11 +145,15 @@ const runtime = qualifierFacetConfigurationSchemas({
   ),
 });
 export const QualifierClaudeFacetConfiguration = runtime.claude;
+export const QualifierClaudeOwnerConfiguration = runtime.claudeOwner;
+export const assertQualifierClaudeOwnerConfiguration = Schema.decodeUnknownSync(
+  runtime.claudeOwner,
+);
 export const QualifierCodexFacetConfiguration = runtime.codex;
 export const assertQualifierClaudeFacetConfiguration = Schema.decodeUnknownSync(runtime.claude);
 export const assertQualifierCodexFacetConfiguration = Schema.decodeUnknownSync(runtime.codex);
 
-export const assertQualifierClaudeInputs = Schema.decodeUnknownSync(QualifierClaudeInputs);
+const decodeClaudeInputs = Schema.decodeUnknownSync(QualifierClaudeInputs);
 const decodeCodexInputs = Schema.decodeUnknownSync(QualifierCodexInputs);
 
 export function qualifierClaudeFacetInputs(
@@ -157,7 +164,7 @@ export function qualifierClaudeFacetInputs(
   },
   variant: "baseline" | "hooks",
 ) {
-  return assertQualifierClaudeInputs({
+  return decodeClaudeInputs({
     RUN_ID: environment.RUN_ID,
     CONFIG_SHA256: environment.CONFIG_SHA256,
     QUALIFIER_CLAUDE_VARIANT: variant,

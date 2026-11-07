@@ -10,7 +10,11 @@ import { QualifierCapabilities } from "./capabilities.ts";
 import type { QualifierEnvironment } from "./environment.ts";
 import { Lifecycle } from "./lifecycle.ts";
 import { ModelController, type Incarnation } from "./modelController.ts";
-import { ClaudeDispatch, type ClaudeDispatchStep } from "./claudeDispatch.ts";
+import {
+  CLAUDE_THREAD_RECEIPT_ROUTE,
+  CLAUDE_THREAD_ROUTE,
+  ClaudeDispatch,
+} from "./claudeDispatch.ts";
 import { claudeStepRoute } from "./claudeScenario.ts";
 import { ClaudeController } from "./claudeController.ts";
 import { requireClaudeAuthorities } from "./claudeAuthorities.ts";
@@ -63,6 +67,7 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
       (await this.ctx.storage.get("observer/calibration-claimed"))
     )
       return "/observer-calibration";
+    if (await this.claudeDispatch.active()) return CLAUDE_THREAD_ROUTE;
     const claudeStep = await this.ctx.storage.get<ClaudeStep>("claude/active-step");
     if (claudeStep) return claudeStepRoute(claudeStep);
     await this.assertLiveOwner();
@@ -146,9 +151,6 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
   }
   async endClaudeStep(step: ClaudeStep) {
     return await this.claude.end(step);
-  }
-  async claudeStepForLoader() {
-    return await this.claude.active();
   }
   modelTransition() {
     return this.#phase;
@@ -578,23 +580,16 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
       return Response.json(
         await this.claudeImportCalibration(importCalibration[1] as ClaudeVariant),
       );
-    const claude = url.pathname.match(
-      /^\/claude\/(baseline|hooks)\/(turn\/[123]|replace|finish)\/(dispatch|receipt)$/u,
-    );
-    if (claude) {
-      const variant = claude[1] as ClaudeVariant;
-      const step = claude[2]!.replace("turn/", "turn-") as ClaudeDispatchStep;
-      if (claude[3] === "dispatch" && request.method === "POST") {
-        await this.#sequenceLifetime.check();
-        const claimed = await this.claudeDispatch.dispatch(variant, step);
-        this.ctx.waitUntil(this.claudeDispatch.pending(variant, step).then(() => undefined));
-        return Response.json(claimed, { status: 202 });
-      }
-      if (claude[3] === "receipt" && request.method === "GET")
-        return new Response(jsonBytes(await this.claudeDispatch.receipt(variant, step)), {
-          headers: { "content-type": "application/json" },
-        });
+    // One-shot claimed with a persisted receipt; a Claude-only run has no Codex sequence to hold.
+    if (request.method === "POST" && url.pathname === CLAUDE_THREAD_ROUTE) {
+      const claimed = await this.claudeDispatch.dispatch();
+      this.ctx.waitUntil(this.claudeDispatch.pending().then(() => undefined));
+      return Response.json(claimed, { status: 202 });
     }
+    if (request.method === "GET" && url.pathname === CLAUDE_THREAD_RECEIPT_ROUTE)
+      return new Response(jsonBytes(await this.claudeDispatch.receipt()), {
+        headers: { "content-type": "application/json" },
+      });
     const match = url.pathname.match(/^\/(turn\/[123]|replace|finish)\/(dispatch|receipt)$/);
     if (match) {
       const step = match[1]!.replace("/", "-") as Step;

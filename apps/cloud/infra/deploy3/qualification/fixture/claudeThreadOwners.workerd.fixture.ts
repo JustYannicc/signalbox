@@ -51,7 +51,7 @@ export class OwnerTail extends WorkerEntrypoint {
 
 export class ClaudeThreadOwnersHost extends DurableObject<Env> {
   readonly calls: Record<Role, number> = { kernel: 0, cli: 0, computer: 0, sdk: 0 };
-  readonly tails: Partial<Record<Role, number>> = {};
+  readonly tails: Partial<Record<Role, "qualifier-tail" | "other">> = {};
 
   /** Opens owners exactly as the qualifier's Claude thread does: its own loader and facets. */
   #runtime(): ClaudeProductOwnerRuntime {
@@ -92,7 +92,12 @@ export class ClaudeThreadOwnersHost extends DurableObject<Env> {
         this.env.LOADER.get(name, async () => {
           const built = await getCode();
           const role = roles.find((candidate) => String(name).includes(`:${candidate}:`));
-          if (role !== undefined) this.tails[role] = built.tails?.length ?? 0;
+          // The runtime must attach exactly this Worker's own tail binding, not merely a tail.
+          if (role !== undefined)
+            this.tails[role] =
+              built.tails?.length === 1 && built.tails[0] === this.env.TAIL
+                ? "qualifier-tail"
+                : "other";
           return built;
         }),
       load: (code) => this.env.LOADER.load(code),

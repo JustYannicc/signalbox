@@ -161,6 +161,7 @@ export default {
         "infra/deploy3/qualification/fixture/claudeFacet.ts",
         "infra/deploy3/qualification/fixture/claudeSdkHost.ts",
         "infra/deploy3/qualification/fixture/claudeCliFacet.ts",
+        "infra/deploy3/qualification/fixture/claudeKernelFacet.ts",
         "infra/deploy3/qualification/fixture/worker.ts",
         "infra/deploy3/qualification/fixture/claudeWorkflow.ts",
         "infra/syncProbe/worker.ts!",

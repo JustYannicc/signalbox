@@ -14,7 +14,7 @@ it("lets Claude dispatch proceed on its own calibration and never on the Codex o
         },
       } as unknown as DurableObjectStorage,
       "incarnation",
-    ).dispatch("baseline", "turn-1");
+    ).dispatch();
 
   await expect(
     dispatchWith({ ready: true, "observer/calibration": { status: "passed" } }),

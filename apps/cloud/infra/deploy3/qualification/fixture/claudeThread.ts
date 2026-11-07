@@ -26,18 +26,15 @@ import {
   claudeOwnerRuntime,
   openClaudeOwnerRelease,
 } from "./claudeOwnerCode.ts";
-import {
-  claudeCapability,
-  claudeOwnerConfiguration,
-  type ClaudeOwnerEnvironment,
-} from "./claudeRuntimeEnvironment.ts";
+import { assertQualifierClaudeOwnerConfiguration } from "../facetEnvironmentContract.ts";
+import { claudeCapability, claudeOwnerConfiguration } from "./claudeRuntimeEnvironment.ts";
 import { claudeNodeRuntimeIdentity, claudeSeedPaths, claudeSystemIdentity } from "./claudeSeed.ts";
 import { claudeQualificationToolObservation } from "./claudeToolObservation.ts";
 import { assert } from "./common.ts";
 import { proof, type QualifierEnvironment } from "./environment.ts";
 import { facetState } from "./facetState.ts";
 
-const CLAUDE_THREAD_VARIANT = "baseline";
+export const CLAUDE_THREAD_VARIANT = "baseline";
 const decodeTurn = Schema.decodeSync(Schema.fromJsonString(Schema.toCodecJson(RunnerTurn)));
 const attempt = <A>(message: string, run: () => Promise<A>) =>
   Effect.tryPromise({
@@ -45,11 +42,10 @@ const attempt = <A>(message: string, run: () => Promise<A>) =>
     catch: (cause) => new HarnessError({ operation: "open", message, cause }),
   });
 
-/** The template turn fixes the thread the qualifier's seed and model peer expect. */
-export async function claudeThreadTemplate(
-  env: Pick<QualifierEnvironment, "QUALIFIER" | "RUN_ID">,
-) {
-  const inputs = await readRpcData(proof(env).claudeThreadInputs(CLAUDE_THREAD_VARIANT));
+/** The template turn fixes the thread and model the qualifier's seed and model peer expect. */
+export function claudeThreadTemplate(inputs: {
+  readonly runtime: { readonly turnJson: Record<typeof CLAUDE_THREAD_VARIANT, readonly string[]> };
+}) {
   const template = inputs.runtime.turnJson[CLAUDE_THREAD_VARIANT][0];
   assert(template, "Claude qualification turn input is missing");
   return decodeTurn(template);
@@ -71,24 +67,36 @@ const claudeThreadMachine: LocalClaudeThreadMachineFactory<
       readRpcData(cap.claudeThreadInputs(variant)),
     );
     const authorities = requireClaudeAuthorities(env);
-    // The same product capabilities, with the disposable access and executor fixtures, that C uses.
-    // Stub types differ from the contract's Fetcher shapes; the kernel validates the inputs it reads.
-    const ownerEnv = {
-      ...createQualifierClaudeFacetEnvironment(
-        {
-          HARNESS_C_PRODUCT_CAPABILITIES: createQualifierShardEnvironment(env, env.LOADER, cap)
-            .HARNESS_C_PRODUCT_CAPABILITIES,
-        },
-        { RUN_ID: env.RUN_ID, CONFIG_SHA256: env.CONFIG_SHA256, runtime: inputs.runtime },
-        variant,
-        authorities,
-      ),
-      HARNESS_C_TARGET_PREPARED_RELEASE: inputs.expected,
-    } as unknown as ClaudeOwnerEnvironment;
+    // The same product capabilities, with the disposable access and executor fixtures, that C
+    // uses. Decoding names any missing capability before an owner or the host relies on it.
+    const ownerEnv = yield* Effect.try({
+      try: () =>
+        assertQualifierClaudeOwnerConfiguration({
+          ...createQualifierClaudeFacetEnvironment(
+            {
+              HARNESS_C_PRODUCT_CAPABILITIES: createQualifierShardEnvironment(env, env.LOADER, cap)
+                .HARNESS_C_PRODUCT_CAPABILITIES,
+            },
+            { RUN_ID: env.RUN_ID, CONFIG_SHA256: env.CONFIG_SHA256, runtime: inputs.runtime },
+            variant,
+            authorities,
+          ),
+          HARNESS_C_TARGET_PREPARED_RELEASE: inputs.expected,
+        }),
+      catch: (cause) =>
+        new HarnessError({
+          operation: "open",
+          message: "The Claude owner environment is incomplete",
+          cause,
+        }),
+    });
     const capability = claudeCapability(ownerEnv);
     const capabilities = narrowHarnessCProductCapabilities<unknown>(
-      ownerEnv.HARNESS_C_PRODUCT_CAPABILITIES as unknown as Readonly<Record<string, Fetcher>>,
+      ownerEnv.HARNESS_C_PRODUCT_CAPABILITIES,
     );
+    // Access stays valid while this thread's machine is open, and ends with it.
+    const lifetime = yield* Effect.abortSignal;
+    let accessAttempts = 0;
     const { claude, processEnvironment } = yield* attempt(
       "The Claude thread configuration is invalid",
       () => claudeOwnerConfiguration(ownerEnv),
@@ -223,14 +231,15 @@ const claudeThreadMachine: LocalClaudeThreadMachineFactory<
         Effect.tryPromise({
           try: async () => {
             assert(work.turn, "The Claude thread's access has no turn");
+            lifetime.throwIfAborted();
             const access = await readRpcData(
               authorities.access.resolveTurnAccess({
                 threadId: work.turn.threadId,
                 runId: work.turn.runId,
-                requestId: work.turn.runId,
+                requestId: `${work.turn.runId}:access-${++accessAttempts}`,
               }),
             );
-            return { ...access, signal: new AbortController().signal };
+            return { ...access, signal: lifetime };
           },
           catch: (cause) =>
             new HarnessError({

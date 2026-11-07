@@ -9,12 +9,8 @@ export const ROUTES = [
     method: "POST",
     path: `/claude/${variant}/calibration`,
   })),
-  ...(["baseline", "hooks"] as const).flatMap((variant) =>
-    ["turn/1", "replace", "turn/2", "turn/3", "finish"].flatMap((step) => [
-      { method: "POST", path: `/claude/${variant}/${step}/dispatch` },
-      { method: "GET", path: `/claude/${variant}/${step}/receipt` },
-    ]),
-  ),
+  { method: "POST", path: "/claude/thread/dispatch" },
+  { method: "GET", path: "/claude/thread/receipt" },
   ...[1, 2, 3].flatMap((turn) => [
     { method: "POST", path: `/turn/${turn}/dispatch` },
     { method: "GET", path: `/turn/${turn}/receipt` },
