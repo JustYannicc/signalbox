@@ -169,9 +169,11 @@ it("gets current artifact pins through the public infra boundary", async () => {
     "/bin/sort",
     "/bin/tail",
     "/bin/touch",
+    "/bin/tr",
     "/bin/ugrep",
     "/bin/uniq",
     "/bin/wc",
+    "/bin/yes",
     "/usr/bin/bash",
     "/usr/bin/cat",
     "/usr/bin/claude",
@@ -196,9 +198,11 @@ it("gets current artifact pins through the public infra boundary", async () => {
     "/usr/bin/sort",
     "/usr/bin/tail",
     "/usr/bin/touch",
+    "/usr/bin/tr",
     "/usr/bin/ugrep",
     "/usr/bin/uniq",
     "/usr/bin/wc",
+    "/usr/bin/yes",
   ]);
   const prepared = {
     schemaVersion: 1 as const,
