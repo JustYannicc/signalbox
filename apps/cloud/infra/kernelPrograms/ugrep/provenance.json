@@ -38,7 +38,7 @@
     "header": "compat/wasi-process-unavailable.h",
     "headerSha256": "121a0db5f2ede3df12db5d21d0decbf6ee76576f4547daad091f51bb3eabb6b3",
     "source": "compat/wasi-process-unavailable.c",
-    "sourceSha256": "5dd156b9a933e6e876ae97221513a5c9d5f78212778d18f853ceeb7faf2705e9",
+    "sourceSha256": "d690e778f0aee87be7110c502c544cdb046d71a12a46c0f345fb494c2a425049",
     "unavailableProcessCalls": ["fork", "execvp", "kill", "popen", "pclose", "system"],
     "systemNullReturns": 0,
     "unavailableError": "ENOSYS"
@@ -91,8 +91,8 @@
     "pthreadLibs": ["-lwasi-emulated-signal", "-lwasi-emulated-getpid"]
   },
   "artifact": {
-    "bytes": 1522097,
-    "sha256": "c402734f83ded748eefb8e58c71ce9cff8bd76425b4ccbc96a7007654240f438",
+    "bytes": 1522484,
+    "sha256": "365188e3613a658551d9a40aa8422963ad15d20cdedfe0e052e56a6d8a849bdb",
     "imports": [
       {
         "module": "wasi_snapshot_preview1",

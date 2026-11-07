@@ -6,6 +6,8 @@ import {
   type ChildWorkerInvocation,
   type ChildWorkerProgramOptions,
 } from "./ChildWorkerProgram.ts";
+import { prepareWasiInheritedFds } from "../kernel/KernelWasiInheritedFds.ts";
+import { CHILD_UGREP_EXECUTABLES } from "./ChildProgramSet.ts";
 import { createWorkerBusyboxHost } from "./WorkerBusyboxHost.ts";
 
 export type ChildBusyboxProgramOptions = Omit<
@@ -15,29 +17,30 @@ export type ChildBusyboxProgramOptions = Omit<
 
 /** Source modules and WASM bytes pass straight to the existing shared child admission path. */
 export function createChildBusyboxProgram(options: ChildBusyboxProgramOptions) {
+  const stockWasiLibc = CHILD_UGREP_EXECUTABLES.some((path) => path === options.executable);
   const hostFactories = new WeakMap<
     KernelBusyboxPort,
     (args: readonly string[]) => ReturnType<typeof createWorkerBusyboxHost>
   >();
   const dispatch = adaptChildArguments(options.executable, options.dispatch, hostFactories);
-  const childEnv: ChildBusyboxProgramOptions["childEnv"] =
-    options.executable === "/bin/grep"
-      ? (context) => ({
-          ...(options.childEnv?.(context) ?? context.env),
-          PWD: context.filesystem.cwd,
-        })
-      : options.childEnv;
+  const childEnv: ChildBusyboxProgramOptions["childEnv"] = stockWasiLibc
+    ? (context) => ({
+        ...(options.childEnv?.(context) ?? context.env),
+        PWD: context.filesystem.cwd,
+      })
+    : options.childEnv;
   return createChildWorkerProgram({
     ...options,
     dispatch,
     ...(childEnv === undefined ? {} : { childEnv }),
     createHost: (context, lease) => {
+      // A fresh stock libc stops discovering preopens at the first non-preopen fd.
+      prepareWasiInheritedFds(context.filesystem, { contiguousPreopens: true });
       const args = childArguments(options.executable, context.args);
       const childContext = args === context.args ? context : { ...context, args };
       const owner = createWorkerBusyboxHost(
         {
           context: childContext,
-          ...(options.executable === "/bin/grep" ? { relativePathsFromCwd: true } : {}),
         },
         lease,
       );
@@ -46,7 +49,6 @@ export function createChildBusyboxProgram(options: ChildBusyboxProgramOptions) {
           createWorkerBusyboxHost(
             {
               context: { ...context, args },
-              relativePathsFromCwd: true,
             },
             lease,
           ),
