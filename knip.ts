@@ -100,7 +100,7 @@ export default {
         // CodeMode preparation and generated workers load these files by name.
         "infra/harnessProof/codeMode/prepare.ts",
         "infra/harnessProof/codeMode/CellService.ts",
-        "src/harness/codeMode/worker.ts",
+        "src/codeMode/internal/worker.ts",
         // signalbox: TypeScript resolves these declarations for generated JSON assets.
         "infra/harnessProof/codeMode/local/cell-code.d.json.ts",
         "infra/harnessProof/codeMode/local/executable.d.json.ts",
@@ -122,6 +122,7 @@ export default {
         "infra/kernelPrograms/*/*.{ts,mjs}",
         "src/kernel/tests/gitProgramProof.ts", // signalbox: standalone real-WASM proof runner.
         "src/computer/tests/ChildSyscallBudgetProbe.ts", // signalbox: bundled by path into the owner-budget probe.
+        "src/computer/tests/ProductCodeModeDrain.workerd.fixture.ts", // Bundled by path in the native drain test.
         "src/kernel/tests/coreutilsProgramProof.mjs", // signalbox: standalone real-WASM proof runner.
         "src/kernel/KernelPipeProof.ts", // Loaded by the static pipe fixture's generated entry.
         "src/kernel/KernelRuntimeProof.ts", // Loaded by the static runtime fixture's generated entry.
