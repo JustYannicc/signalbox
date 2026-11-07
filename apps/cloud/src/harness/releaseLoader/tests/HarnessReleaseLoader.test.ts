@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { loadHarnessRelease } from "../../HarnessReleaseLoader.ts";
+import { loadHarnessRelease, reusableHarnessRelease } from "../../HarnessReleaseLoader.ts";
 import {
   claudeFixture,
   cliModuleMap,
@@ -73,6 +73,46 @@ describe("loadHarnessRelease", () => {
     expect(fixture.reads).toContain(`cli/${literalModuleName}`);
     expect(fixture.reads).not.toContain("cli/chunks//$bunfs/root/chunk.js");
     expect(ready.plan.preparedModules["cli/cli.js"]?.path).toBe("cli/main/cli.js");
+  });
+
+  it("leaves prepared module bytes to their materializer when asked", async () => {
+    const fixture = await claudeFixture();
+    const ready = await loadHarnessRelease({ ...fixture.options, verifyPreparedModules: false });
+    // Assets and module maps are still read once, verified and retained.
+    const retainedPaths = ["cli/assets/help", "cli/data.txt", "cli/module-map.json"];
+    const modules = Object.values(ready.plan.preparedModules)
+      .map(({ path }) => path)
+      .filter((path) => !retainedPaths.includes(path));
+    expect(modules.length).toBeGreaterThan(0);
+    expect(fixture.reads.filter((path) => modules.includes(path))).toEqual([]);
+    expect([...ready.payloads.keys()].sort()).toEqual(retainedPaths);
+    for (const path of retainedPaths)
+      expect(fixture.reads.filter((read) => read === path)).toHaveLength(1);
+  });
+
+  it("reuses a verified release only for the exact artifact, computer and allowance", async () => {
+    const { options } = await claudeFixture();
+    const loaded = await loadHarnessRelease(options);
+    const verified = { options, loaded };
+    expect(reusableHarnessRelease(verified, options)).toBe(loaded);
+    expect(reusableHarnessRelease(undefined, options)).toBeUndefined();
+    expect(
+      reusableHarnessRelease(verified, {
+        ...options,
+        maxPreparedModuleBytes: options.maxPreparedModuleBytes + 1,
+      }),
+    ).toBe(loaded);
+    for (const changed of [
+      { ...options, identity: { ...options.identity, artifactHash: "0".repeat(64) } },
+      { ...options, identity: { ...options.identity, artifactRef: "another-release" } },
+      { ...options, identity: { ...options.identity, sourceIdentity: "another-source" } },
+      {
+        ...options,
+        trustedComputer: { ...options.trustedComputer, manifestSha256: "0".repeat(64) },
+      },
+      { ...options, maxPreparedModuleBytes: options.maxPreparedModuleBytes - 1 },
+    ])
+      expect(reusableHarnessRelease(verified, changed)).toBeUndefined();
   });
 
   it("rejects a rehashed qualification artifact on the product load path", async () => {

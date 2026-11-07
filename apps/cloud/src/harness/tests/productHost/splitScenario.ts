@@ -6,6 +6,7 @@ import { dataForDriver } from "../../adapter/tests/data.ts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
 import { createProductClaudeKernelHost } from "../../ProductClaudeKernelHost.ts";
+import { loadHarnessRelease } from "../../HarnessReleaseLoader.ts";
 import { createClaudeCliFacetClass } from "../../ClaudeCliSession.ts";
 import { workingSetPolicy } from "./workingSetPolicy.fixture.ts";
 import { ClaudeKernelSession } from "../../ClaudeKernelSession.ts";
@@ -30,7 +31,8 @@ export const run = (
     | "dispose-child"
     | "no-machine"
     | "failed-metadata"
-    | "cancel-child-leases" = "turns",
+    | "cancel-child-leases"
+    | "verified-release" = "turns",
 ) =>
   Effect.runPromise(
     Effect.scoped(
@@ -198,10 +200,40 @@ export const run = (
           save: original.save,
           port: original.port,
         }));
+        // A machine that already verified the release hands it over; the host must not read it.
+        const releaseReads: string[] = [];
+        const { source, ...verifiedOptions } = original.release;
+        const verifiedRelease =
+          mode === "verified-release"
+            ? {
+                options: verifiedOptions,
+                loaded: yield* Effect.promise(() => loadHarnessRelease(original.release)),
+              }
+            : undefined;
         const host = yield* createProductClaudeKernelHost({
           threadId: original.threadId,
           sessionKey: "controlled-product-incarnation",
-          release: original.release,
+          release:
+            verifiedRelease === undefined
+              ? original.release
+              : {
+                  ...original.release,
+                  source: {
+                    read: (reference, path) => {
+                      releaseReads.push(path);
+                      return source.read(reference, path);
+                    },
+                    ...(source.readRange === undefined
+                      ? {}
+                      : {
+                          readRange: (reference, path, offset, length) => {
+                            releaseReads.push(path);
+                            return source.readRange!(reference, path, offset, length);
+                          },
+                        }),
+                  },
+                },
+          ...(verifiedRelease === undefined ? {} : { verifiedRelease }),
           releaseVariants: original.releaseVariants,
           programs: original.programs,
           machineInventory:
@@ -247,6 +279,7 @@ export const run = (
         yield* Effect.addFinalizer(() => host.dispose.pipe(Effect.orDie));
         yield* host.seed("assets");
         yield* host.seed("programs");
+        if (verifiedRelease !== undefined) NodeAssert.deepEqual(releaseReads, []);
         const identity = yield* Effect.promise(() => kernel.kernelIdentity());
         if (mode === "cancel-prepare") {
           const opening = yield* host
