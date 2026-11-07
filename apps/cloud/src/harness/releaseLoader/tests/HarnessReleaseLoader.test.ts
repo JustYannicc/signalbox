@@ -115,6 +115,33 @@ describe("loadHarnessRelease", () => {
       expect(reusableHarnessRelease(verified, changed)).toBeUndefined();
   });
 
+  it("refuses a verified release whose loaded plan is not the one its options name", async () => {
+    const a = await claudeFixture();
+    const b = await claudeFixture({ sourceIdentity: "e".repeat(64) });
+    const loadedA = await loadHarnessRelease(a.options);
+    const loadedB = await loadHarnessRelease(b.options);
+    expect(b.options.identity.artifactHash).not.toBe(a.options.identity.artifactHash);
+    expect(reusableHarnessRelease({ options: b.options, loaded: loadedB }, b.options)).toBe(
+      loadedB,
+    );
+    // Options for A paired with B's loaded release must not pass as A.
+    expect(
+      reusableHarnessRelease({ options: a.options, loaded: loadedB }, a.options),
+    ).toBeUndefined();
+    const { plan } = loadedA;
+    for (const changed of [
+      { ...plan, computer: { ...plan.computer, manifestSha256: "0".repeat(64) } },
+      { ...plan, computer: { ...plan.computer, sourceIdentity: "0".repeat(64) } },
+      { ...plan, release: { ...plan.release, manifestSha256: "0".repeat(64) } },
+    ])
+      expect(
+        reusableHarnessRelease(
+          { options: a.options, loaded: { ...loadedA, plan: changed } },
+          a.options,
+        ),
+      ).toBeUndefined();
+  });
+
   it("rejects a rehashed qualification artifact on the product load path", async () => {
     const fixture = await claudeFixture({
       omission: {

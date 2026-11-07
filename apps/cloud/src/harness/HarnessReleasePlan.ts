@@ -23,8 +23,9 @@ export type {
 
 /**
  * Converts verified common metadata and untrusted provider wire manifests without I/O.
- * The caller must read every preparedModules entry through the accepted reader before
- * importing any module. A plan establishes neither runtime compatibility nor qualification.
+ * A preparedModules entry is only a descriptor: its bytes are verified only where
+ * `materializeHarnessProcessModules` (`materializePreparedReleaseAsset`) reads them, so never
+ * import one directly. A plan establishes neither runtime compatibility nor qualification.
  */
 export function planHarnessRelease(input: HarnessReleasePlanInput): HarnessReleasePlan {
   if (!Number.isSafeInteger(input.maxPreparedModuleBytes) || input.maxPreparedModuleBytes < 0)
