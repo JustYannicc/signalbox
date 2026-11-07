@@ -19,7 +19,7 @@ import { NodeChildControl, createCliProcessLeases } from "./cliKernel/Children.t
 import { kernelError } from "../kernel/KernelErrno.ts";
 import { nodeProcessSignalError } from "../isolate/NodeProcessSignals.ts";
 import { digestCliFiles, lookupCliPaths } from "./cliKernel/Metadata.ts";
-import { CliMetadataIndex, CliMetadataWalk } from "./cliKernel/MetadataWalk.ts";
+import { CliMetadataIndex, createCliMetadataWalk } from "./cliKernel/MetadataWalk.ts";
 import { hasPrivateDescriptorAlias } from "./cliKernel/DescriptorAliases.ts";
 import { nodeFsError } from "../isolate/NodeFsError.ts";
 
@@ -197,7 +197,7 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
         // Changes that land while indexing are after this revision, so the CLI re-reads them.
         this.#index = new CliMetadataIndex(
           this.#revision(true),
-          new CliMetadataWalk(this.#resources.storage.files, this.#metadataLimit),
+          createCliMetadataWalk(this.#resources.storage.files, this.#metadataLimit),
           (event) => this.#resources.trace("kernel", event),
         );
       const index = this.#index;

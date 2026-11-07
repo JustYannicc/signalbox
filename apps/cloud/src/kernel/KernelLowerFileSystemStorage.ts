@@ -12,8 +12,7 @@ import {
 import { KernelLowerFileSystemDirectoryLayer } from "./KernelLowerFileSystemDirectoryLayer.ts";
 import { KernelLowerFileSystemFileLayer } from "./KernelLowerFileSystemFileLayer.ts";
 import { lowerFileSystemUpperStorage } from "./KernelLowerFileSystemUpperStorage.ts";
-import { KernelLowerFileSystemTree } from "./KernelLowerFileSystemTree.ts";
-import { hasStorageSnapshot } from "./KernelStorageSnapshot.ts";
+import { hasStorageSnapshot, isStorageSnapshot } from "./KernelStorageSnapshot.ts";
 import type {
   CreateOptions,
   DirectoryEntry,
@@ -48,13 +47,25 @@ export class KernelLowerFileSystemStorage
   readonly root: Inode;
   readonly #upper: Storage;
   readonly #directories: KernelLowerFileSystemDirectoryLayer;
-  readonly #files: KernelLowerFileSystemFileLayer;
+  #files: KernelLowerFileSystemFileLayer;
   readonly #overlayUpper: ReturnType<typeof lowerFileSystemUpperStorage>;
   readonly #invalidationHooks = new Set<() => void>();
   readonly #upperLayer: KernelLowerFileSystemUpperLayer;
   readonly posix: MaybePosixStorage["posix"];
-  #sourceIndex: KernelLowerFileSystemSourceIndex | undefined;
-  #attachmentToken: symbol | undefined;
+  /** The attached lower layer, which a snapshot twin shares with the overlay it was read from. */
+  #lower: { index?: KernelLowerFileSystemSourceIndex | undefined; token?: symbol | undefined } = {};
+  get #sourceIndex() {
+    return this.#lower.index;
+  }
+  set #sourceIndex(index: KernelLowerFileSystemSourceIndex | undefined) {
+    this.#lower.index = index;
+  }
+  get #attachmentToken() {
+    return this.#lower.token;
+  }
+  set #attachmentToken(token: symbol | undefined) {
+    this.#lower.token = token;
+  }
   #nextLowerInode = FIRST_LOWER_INODE;
 
   constructor(upper: Storage) {
@@ -98,6 +109,8 @@ export class KernelLowerFileSystemStorage
   }
 
   attach(source: KernelLowerFileSystemSource): KernelLowerFileSystem {
+    // A snapshot twin shares the overlay's lower layer; only the overlay may attach one.
+    if (isStorageSnapshot(this.#upper)) throw kernelError("EROFS");
     if (this.#sourceIndex !== undefined) throw kernelError("EEXIST");
     const token = Symbol("KernelLowerFileSystem.attachment");
     const index = new KernelLowerFileSystemSourceIndex(source, () => {
@@ -142,19 +155,24 @@ export class KernelLowerFileSystemStorage
   }
 
   /**
-   * The merged tree from one snapshot of upper storage; undefined when it can't take one. It
-   * answers by this class's `lookup`, `readdir`, `stat` and `posix.get` rules, so a change to
-   * any of them needs the same change in `KernelLowerFileSystemTree`.
+   * A read-only twin over one snapshot of upper storage, or undefined when the upper can't take
+   * one. It shares this overlay's lower layer and copy-ups, so its reads are this class's own,
+   * answered from memory. Fails with E2BIG past `maxEntries` upper names.
    */
-  tree(maxEntries: number): KernelLowerFileSystemTree | undefined {
+  snapshot(maxEntries: number): KernelLowerFileSystemStorage | undefined {
     if (!hasStorageSnapshot(this.#upper)) return undefined;
-    return new KernelLowerFileSystemTree(this.#upper.snapshot(maxEntries), {
-      root: this.root,
-      upper: this.#upper,
-      source: () => this.#sourceIndex,
-      upperFileForLower: (inode) => this.#files.upperInodeForLower(inode),
-      nativeMetadata: (inode) => this.nativeMetadata(inode),
-    });
+    const upper = this.#upper.snapshot(maxEntries);
+    const twin = new KernelLowerFileSystemStorage(upper);
+    twin.#lower = this.#lower;
+    // The twin's own copy-ups would write the snapshot and fail; this overlay's show through.
+    twin.#files = new KernelLowerFileSystemFileLayer(
+      upper,
+      twin.#overlayUpper,
+      twin.#directories,
+      () => twin.#sourceIndex,
+      (inode) => this.#files.upperInodeForLower(inode),
+    );
+    return twin;
   }
 
   byteViewStorage(inode: Inode): Storage | undefined {

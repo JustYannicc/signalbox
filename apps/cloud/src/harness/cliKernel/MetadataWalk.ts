@@ -1,4 +1,9 @@
-import type { KernelFileSystem, KernelStat } from "../../kernel/KernelFileSystem.ts";
+import type {
+  KernelFileSystem,
+  KernelFileSystemTree,
+  KernelStat,
+  KernelTreeEntry,
+} from "../../kernel/KernelFileSystem.ts";
 import type { CliFileMetadata } from "../CliFileWorkingSet.ts";
 import type { ClaudeCliMetadataPage } from "../ClaudeCliKernelPort.ts";
 import type { CliViewTrace } from "../CliViewTrace.ts";
@@ -6,19 +11,24 @@ import { kernelError } from "../../kernel/KernelErrno.ts";
 import { turnBudget } from "../cliFilesystem/Turn.ts";
 import { nodeFsError } from "../../isolate/NodeFsError.ts";
 
+interface Walk {
+  readonly entries: readonly CliFileMetadata[];
+  readonly done: boolean;
+  next(count: number, signal: AbortSignal): Promise<void>;
+}
+
 /**
  * One index handed out a page at a time: the entries read so far, and the walk that reads on when
  * the CLI asks past them. Pages are read one at a time, and each is traced as it starts and ends.
  */
 export class CliMetadataIndex {
   readonly revision: number;
-  readonly #walk: CliMetadataWalk;
+  readonly #walk: Walk;
   readonly #trace: (event: CliViewTrace) => void;
-  readonly #entries: CliFileMetadata[] = [];
   #reading: Promise<unknown> = Promise.resolve();
   #failed = false;
 
-  constructor(revision: number, walk: CliMetadataWalk, trace: (event: CliViewTrace) => void) {
+  constructor(revision: number, walk: Walk, trace: (event: CliViewTrace) => void) {
     this.revision = revision;
     this.#walk = walk;
     this.#trace = trace;
@@ -30,21 +40,22 @@ export class CliMetadataIndex {
   }
 
   async page(cursor: number, size: number, signal: AbortSignal): Promise<ClaudeCliMetadataPage> {
-    if (this.#failed || cursor > this.#entries.length) throw kernelError("ESTALE");
+    const entries = this.#walk.entries;
+    if (this.#failed || cursor > entries.length) throw kernelError("ESTALE");
     const end = cursor + size;
     const read = this.#reading.then(() => this.#readTo(end, signal));
     this.#reading = read.catch(() => undefined);
     await read;
-    const last = Math.min(this.#entries.length, end);
+    const last = Math.min(entries.length, end);
     return {
       revision: this.revision,
-      entries: this.#entries.slice(cursor, last),
-      next: this.#walk.done && last === this.#entries.length ? null : last,
+      entries: entries.slice(cursor, last),
+      next: this.#walk.done && last === entries.length ? null : last,
     };
   }
 
   async #readTo(end: number, signal: AbortSignal) {
-    const before = this.#entries.length;
+    const before = this.#walk.entries.length;
     if (before >= end || this.#walk.done) return;
     const started = performance.now();
     const trace = (phase: "start" | "end", failed?: true) => {
@@ -53,7 +64,7 @@ export class CliMetadataIndex {
           kind: "index-page",
           phase,
           cursor: before,
-          entries: this.#entries.length - before,
+          entries: this.#walk.entries.length - before,
           ...(phase === "end" ? { durationMs: Math.round(performance.now() - started) } : {}),
           ...(failed === undefined ? {} : { failed }),
         });
@@ -63,7 +74,7 @@ export class CliMetadataIndex {
     };
     trace("start");
     try {
-      this.#entries.push(...(await this.#walk.next(end - before, signal)));
+      await this.#walk.next(end - before, signal);
     } catch (cause) {
       this.#failed = true;
       trace("end", true);
@@ -78,38 +89,45 @@ interface Entry {
   readonly stat: KernelStat;
 }
 
-/** How the walk reads the tree: from one storage snapshot, or path by path where there is none. */
-interface TreeSource {
+/** How the walk reads the tree: by inode, or path by path where it can't. */
+interface TreeSource<E extends Entry> {
+  /**
+   * Whether the walk may stop between pages. A live read can find a directory unsearchable after
+   * the walk handed it out, and the directory is then marked with its denial where it stands, so
+   * only a snapshot, which can't change, is read a page per call. Live reads walk in one call.
+   */
+  readonly paged: boolean;
   run<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T>;
-  root(signal: AbortSignal): Promise<Entry>;
-  readdir(directory: Entry, signal: AbortSignal): Promise<readonly string[]>;
-  lstat(directory: Entry, name: string, signal: AbortSignal): Promise<Entry>;
-  readlink(entry: Entry, signal: AbortSignal): Promise<string>;
+  root(signal: AbortSignal): Promise<E>;
+  readdir(directory: E, signal: AbortSignal): Promise<readonly string[]>;
+  lstat(directory: E, name: string, signal: AbortSignal): Promise<E>;
+  readlink(entry: E, signal: AbortSignal): Promise<string>;
 }
 
-interface Frame {
-  readonly directory: Entry;
+interface Frame<E extends Entry> {
+  readonly directory: E;
   readonly names: readonly string[];
+  /** Where the directory's own entry is, to mark a denial its later children reveal. */
+  readonly at: number;
   next: number;
   /** The child read to learn whether the directory is searchable, visited first. */
-  first: Entry | undefined;
+  first: E | undefined;
 }
 
 /**
- * The CLI's index of accessible metadata, depth first, a page at a time, so no single call to
- * Computer walks the whole tree. Indexing is unsolicited: a directory the CLI may not read or
- * search is kept with its denial for actual CLI access, never turned into a failure.
+ * The CLI's index of accessible metadata, depth first, read on as far as asked. Indexing is
+ * unsolicited: a directory the CLI may not read or search is kept with its denial for actual CLI
+ * access, never turned into a failure.
  */
-export class CliMetadataWalk {
-  readonly #filesystem: KernelFileSystem;
+export class CliMetadataWalk<E extends Entry> {
+  readonly entries: CliFileMetadata[] = [];
+  readonly #source: TreeSource<E>;
   readonly #limit: number;
-  #source: TreeSource | undefined;
-  readonly #stack: Frame[] = [];
+  readonly #stack: Frame<E>[] = [];
   #started = false;
-  #produced = 0;
 
-  constructor(filesystem: KernelFileSystem, limit: number) {
-    this.#filesystem = filesystem;
+  constructor(source: TreeSource<E>, limit: number) {
+    this.#source = source;
     this.#limit = limit;
   }
 
@@ -117,11 +135,11 @@ export class CliMetadataWalk {
     return this.#started && this.#stack.length === 0;
   }
 
-  /** Up to `count` more entries; fewer only at the end. */
-  async next(count: number, signal: AbortSignal): Promise<CliFileMetadata[]> {
-    if (this.done) return [];
-    const source = (this.#source ??= treeSource(this.#filesystem, this.#limit));
-    const page: CliFileMetadata[] = [];
+  /** Reads at least `count` more entries, or to the end; a live source reads to the end. */
+  async next(count: number, signal: AbortSignal): Promise<void> {
+    if (this.done) return;
+    const source = this.#source;
+    const until = source.paged ? this.entries.length + count : Infinity;
     await source.run(signal, async () => {
       const turn = turnBudget();
       if (!this.#started) {
@@ -132,9 +150,9 @@ export class CliMetadataWalk {
           throw nodeFsError(cause, "lstat", "/");
         }
         this.#started = true;
-        await this.#enter(source, root, page, signal);
+        await this.#enter(root, signal);
       }
-      while (page.length < count) {
+      while (this.entries.length < until) {
         signal.throwIfAborted();
         const frame = this.#stack.at(-1);
         if (frame === undefined) break;
@@ -152,81 +170,93 @@ export class CliMetadataWalk {
             child = await source.lstat(frame.directory, name, signal);
           } catch (cause) {
             if (vanished(path, cause)) continue;
-            // Its first child already showed the directory searchable; only a change since can
-            // deny the rest, and the directory itself was already handed out.
-            if (denied(cause)) {
-              this.#stack.pop();
-              continue;
-            }
-            throw nodeFsError(cause, "lstat", path);
+            if (!denied(cause)) throw nodeFsError(cause, "lstat", path);
+            // Its first child showed it searchable, so it changed since; the rest stay unread.
+            this.#stack.pop();
+            this.#denySearch(frame);
+            continue;
           }
         }
-        await this.#enter(source, child, page, signal);
+        await this.#enter(child, signal);
       }
     });
-    if (this.done) this.#source = undefined;
-    return page;
   }
 
-  /** Emits one entry, with any denial already decided, and queues a directory's children. */
-  async #enter(source: TreeSource, entry: Entry, page: CliFileMetadata[], signal: AbortSignal) {
-    if (this.#produced >= this.#limit) throw kernelError("E2BIG");
-    const emit = (metadata: CliFileMetadata) => {
-      this.#produced++;
-      page.push(metadata);
-    };
+  /** Adds one entry, with any denial already decided, and queues a directory's children. */
+  async #enter(entry: E, signal: AbortSignal) {
+    if (this.entries.length >= this.#limit) throw kernelError("E2BIG");
     const { path, stat } = entry;
     let target: string | undefined;
     if (stat.type === "symlink") {
       try {
-        target = await source.readlink(entry, signal);
+        target = await this.#source.readlink(entry, signal);
       } catch (cause) {
         if (vanished(path, cause)) return;
         throw nodeFsError(cause, "readlink", path);
       }
     }
     const metadata: CliFileMetadata = { path, stat, ...(target === undefined ? {} : { target }) };
-    if (stat.type !== "directory") return emit(metadata);
+    if (stat.type !== "directory") return void this.entries.push(metadata);
     let names: readonly string[];
     try {
-      names = await source.readdir(entry, signal);
+      names = await this.#source.readdir(entry, signal);
     } catch (cause) {
       if (vanished(path, cause)) return;
       if (!denied(cause)) throw nodeFsError(cause, "scandir", path);
-      return emit({ ...metadata, directoryDenial: { read: "EACCES" } });
+      return void this.entries.push({ ...metadata, directoryDenial: { read: "EACCES" } });
     }
-    const frame: Frame = { directory: entry, names, next: 0, first: undefined };
+    const at = this.entries.push(metadata) - 1;
+    const frame: Frame<E> = { directory: entry, names, at, next: 0, first: undefined };
     while (frame.first === undefined) {
       const name = names[frame.next++];
-      if (name === undefined) break;
+      if (name === undefined) return;
       const child = childPath(path, name);
       try {
-        frame.first = await source.lstat(entry, name, signal);
+        frame.first = await this.#source.lstat(entry, name, signal);
       } catch (cause) {
         if (vanished(child, cause)) continue;
         if (!denied(cause)) throw nodeFsError(cause, "lstat", child);
-        return emit({ ...metadata, children: [...names], directoryDenial: { search: "EACCES" } });
+        return this.#denySearch(frame);
       }
     }
-    emit(metadata);
-    if (frame.first !== undefined) this.#stack.push(frame);
+    this.#stack.push(frame);
+  }
+
+  #denySearch(frame: Frame<E>) {
+    this.entries[frame.at] = {
+      ...this.entries[frame.at]!,
+      children: [...frame.names],
+      directoryDenial: { search: "EACCES" },
+    };
   }
 }
 
 /**
- * A snapshot holds every name of Computer's storage. Names are almost all visible ones, which the
- * index already bounds, so twice that is room for the few hidden below a denied directory.
+ * The walk for a filesystem: by inode where it can be, path by path where not. A snapshot holds
+ * every name of Computer's storage; twice the index's own bound leaves room for names it never
+ * reaches, and a larger tree is read live, still by inode.
  */
-function treeSource(filesystem: KernelFileSystem, limit: number): TreeSource {
-  let tree;
-  try {
-    tree = filesystem.metadataTree(limit * 2);
-  } catch (cause) {
-    if (code(cause) === "E2BIG") throw kernelError("E2BIG");
-    throw cause;
-  }
-  if (tree !== undefined) return tree;
+export function createCliMetadataWalk(filesystem: KernelFileSystem, limit: number) {
+  const tree = filesystem.metadataTree(limit * 2);
+  return tree === undefined
+    ? new CliMetadataWalk(pathSource(filesystem), limit)
+    : new CliMetadataWalk(treeSource(tree), limit);
+}
+
+function treeSource(tree: KernelFileSystemTree): TreeSource<KernelTreeEntry> {
   return {
+    paged: tree.snapshot,
+    run: (signal, run) => tree.run(signal, run),
+    root: () => tree.root(),
+    readdir: (directory) => tree.readdir(directory),
+    lstat: (directory, name) => tree.lstat(directory, name),
+    readlink: (entry) => tree.readlink(entry),
+  };
+}
+
+function pathSource(filesystem: KernelFileSystem): TreeSource<Entry> {
+  return {
+    paged: false,
     run: (_signal, run) => run(),
     root: async (signal) => ({ path: "/", stat: await filesystem.lstatAsync("/", signal) }),
     readdir: (directory, signal) => filesystem.readdirAsync(directory.path, signal),
@@ -240,8 +270,8 @@ function treeSource(filesystem: KernelFileSystem, limit: number): TreeSource {
 
 const childPath = (parent: string, name: string) => `${parent === "/" ? "" : parent}/${name}`;
 
-// Read path by path, or live from the machine, a child can go between its directory's listing and
-// its own lstat. A gone child is left out; the change feed brings it to the next round.
+// Read live, a child can go between its directory's listing and its own lstat. A gone child is
+// left out; the change feed brings it to the next round.
 const vanished = (path: string, cause: unknown) =>
   path !== "/" && ["ENOENT", "ENOTDIR"].includes(code(cause));
 

@@ -18,6 +18,7 @@ export class KernelLowerFileSystemFileLayer {
   readonly #directories: KernelLowerFileSystemDirectoryLayer;
   readonly #source: () => KernelLowerFileSystemSourceIndex | undefined;
   readonly #upperByLowerInode = new Map<Inode, Inode>();
+  readonly #copiedUp: ((inode: Inode) => Inode | undefined) | undefined;
   readonly #references = new Map<Inode, number>();
   #nextStagingId = 0n;
 
@@ -26,15 +27,18 @@ export class KernelLowerFileSystemFileLayer {
     overlay: KernelLowerFileSystemUpperStorage["lowerOverlay"] | undefined,
     directories: KernelLowerFileSystemDirectoryLayer,
     source: () => KernelLowerFileSystemSourceIndex | undefined,
+    /** Another layer's copy-ups, which a snapshot twin reads but can never change. */
+    copiedUp?: (inode: Inode) => Inode | undefined,
   ) {
     this.#upper = upper;
     this.#overlay = overlay;
     this.#directories = directories;
     this.#source = source;
+    this.#copiedUp = copiedUp;
   }
 
   upperInodeForLower(inode: Inode): Inode | undefined {
-    return this.#upperByLowerInode.get(inode);
+    return this.#upperByLowerInode.get(inode) ?? this.#copiedUp?.(inode);
   }
 
   retainLower(inode: Inode): void {

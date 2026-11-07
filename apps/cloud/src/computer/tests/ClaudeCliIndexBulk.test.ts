@@ -78,12 +78,22 @@ describe("the CLI's startup index", () => {
           fs.mkdirSync("/home/u/.claude", { recursive: true });
           fs.writeFileSync("/home/u/.claude/settings.json", "{}");
           fs.symlinkSync("../u/.claude", "/home/u/link");
+          fs.linkSync("/home/u/.claude/settings.json", "/home/u/hard");
           fs.mkdirSync("/home/u/private");
           fs.writeFileSync("/home/u/private/note", "x");
           if (posix) fs.chmodSync("/home/u/private", 0o000);
         },
       });
       try {
+        // Files a copy-up is still staging: one over a machine file, one new. Neither is visible.
+        const metadata = { mode: 0o600, uid: 1000, gid: 1000 };
+        const etc = f.upper.lookup(f.upper.root, "etc");
+        f.upper.lowerOverlay.createStagingFile(etc, "kept", "/etc/kept", metadata);
+        const home = ["home", "u", ".claude"].reduce(
+          (at, name) => f.upper.lookup(at, name),
+          f.upper.root,
+        );
+        f.upper.lowerOverlay.createStagingFile(home, ".stage", "/home/u/.claude/.stage", metadata);
         const { entries } = await index(f);
         expect(entries).toEqual(
           await referenceCliMetadata(files!, 4096, new AbortController().signal),
@@ -92,7 +102,12 @@ describe("the CLI's startup index", () => {
         expect(at("/usr/bin/tool")?.stat.size).toBe(7n);
         expect(at("/usr/bin/sh")?.target).toBe("bash");
         expect(at("/usr/lib/one")?.stat.ino).toBe(at("/usr/lib/two")?.stat.ino);
-        expect(at("/etc/kept")).toBeDefined();
+        expect(at("/etc/kept")?.stat.ino).toBeGreaterThanOrEqual(1n << 63n);
+        expect(at("/home/u/.claude/.stage")).toBeUndefined();
+        expect(at("/home/u/hard")?.stat).toMatchObject({
+          ino: at("/home/u/.claude/settings.json")?.stat.ino,
+          nlink: 2n,
+        });
         expect(at("/etc/gone")).toBeUndefined();
         expect([at("/merged/lower"), at("/merged/upper")]).not.toContain(undefined);
         expect(at("/home/u/link")?.target).toBe("../u/.claude");
@@ -181,6 +196,62 @@ describe("the CLI's startup index", () => {
     },
   );
 
+  it("counts only the names the CLI sees, though Computer holds more than a snapshot may", async () => {
+    const f = await fixture(128, ["/sync"], true, {
+      metadataLimit: 64,
+      seed(fs) {
+        // Far more names than a snapshot of a 64-entry index holds, all in a directory shut to
+        // the CLI, so the index itself stays small.
+        fs.mkdirSync("/home/u/shut", { recursive: true });
+        for (let file = 0; file < 200; file++) fs.writeFileSync(`/home/u/shut/f${file}`, "");
+        fs.chmodSync("/home/u/shut", 0o000);
+      },
+    });
+    try {
+      const { entries } = await index(f);
+      expect(entries.find(({ path }) => path === "/home/u/shut")?.directoryDenial).toEqual({
+        read: "EACCES",
+      });
+      expect(entries.length).toBeLessThan(64);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("marks a directory that turns unsearchable partway, as the walk always did", async () => {
+    let armed = false;
+    const f = await fixture(128, ["/sync"], true, {
+      seed(fs, files) {
+        fs.mkdirSync("/d");
+        for (const name of ["a", "b", "c"]) fs.writeFileSync(`/d/${name}`, "");
+        // Read live, path by path: nothing holds the directory's mode still during the walk.
+        files.metadataTree = () => undefined;
+        const lstat = files.lstatAsync.bind(files);
+        files.lstatAsync = async (path, signal) => {
+          const stat = await lstat(path, signal);
+          if (armed && path === "/d/a") {
+            armed = false;
+            fs.chmodSync("/d", 0o644);
+          }
+          return stat;
+        };
+      },
+    });
+    try {
+      armed = true;
+      const { entries } = await index(f);
+      const paths = entries.map(({ path }) => path);
+      expect(entries.find(({ path }) => path === "/d")).toMatchObject({
+        children: ["a", "b", "c"],
+        directoryDenial: { search: "EACCES" },
+      });
+      expect(paths).toContain("/d/a");
+      expect(paths).not.toContain("/d/b");
+    } finally {
+      await f.close();
+    }
+  });
+
   it("starts over when a page fails, rather than resuming a broken walk", async () => {
     let failing = false;
     const f = await fixture(128, ["/sync"], false, {
@@ -194,10 +265,10 @@ describe("the CLI's startup index", () => {
           const tree = metadataTree(maxEntries);
           if (tree === undefined) return undefined;
           const readdir = tree.readdir.bind(tree);
-          tree.readdir = async (directory, signal) => {
+          tree.readdir = async (directory) => {
             if (failing && directory.path === "/z")
               throw Object.assign(new Error("lost"), { code: "EIO" });
-            return readdir(directory, signal);
+            return readdir(directory);
           };
           return tree;
         };

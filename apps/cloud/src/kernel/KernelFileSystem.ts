@@ -7,10 +7,7 @@ import type {
   KernelLowerFileSystemSource,
 } from "./KernelLowerFileSystem.ts";
 import { hasChangeGeneration } from "./ChangeGenerationStorage.ts";
-import {
-  posixPathAlias as descriptorPathAlias,
-  descriptorPathSuffix,
-} from "./filesystem/KernelPathAliases.ts";
+import { resolvesThroughDescriptors } from "./filesystem/KernelPathAliases.ts";
 import { WasiFileSystem } from "./wasi/internal_wasi_fs.ts";
 import { WasiMemory } from "./wasi/internal_wasi_memory.ts";
 import { runSync } from "./wasi/internal_wasi_calls.ts";
@@ -52,6 +49,7 @@ import type {
 
 export { KernelOpenFlags };
 export type { KernelPosixCredentials, KernelPosixMetadata, KernelPosixOptions, KernelStat };
+export type { KernelFileSystemTree, KernelTreeEntry } from "./filesystem/KernelFileSystemTree.ts";
 export type { WasiStdio } from "./wasi/internal_wasi_descriptors.ts";
 
 export interface KernelFileSystemConfig {
@@ -259,24 +257,38 @@ export class KernelFileSystem {
   }
 
   /**
-   * The whole tree, as lstat and readdir report it path by path, from one snapshot of storage,
-   * for indexing it without resolving each path from the root. Undefined where storage can't
-   * take a snapshot or the tree has more than one mount; those callers index path by path.
+   * The whole tree, as lstat and readdir report it path by path, walked by inode for indexing it
+   * without resolving each path from the root. It reads one snapshot of storage where storage can
+   * take one of at most `maxEntries` names, and live storage otherwise. Undefined where the tree
+   * has more than one mount or a byte view; those callers index path by path.
    */
   metadataTree(maxEntries: number): KernelFileSystemTree | undefined {
     return this.#system(() => {
       this.#assertOpen();
       if (this.#fileBytes.kind !== "canonical" || this.#mounts.length !== 1) return undefined;
       const mount = this.#paths.resolver.mountForPath("/");
-      const storage = this.#lowerFileSystemStorage;
-      if (storage === undefined || mount.storage !== storage) return undefined;
-      const tree = storage.tree(maxEntries);
-      if (tree === undefined) return undefined;
+      const overlay = this.#lowerFileSystemStorage;
+      if (overlay === undefined || mount.storage !== overlay) return undefined;
+      let snapshot: KernelLowerFileSystemStorage | undefined;
+      try {
+        snapshot = overlay.snapshot(maxEntries);
+      } catch (error) {
+        // Names past the cap may be ones the walk never reaches; live reads count only those.
+        if (
+          !(
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            error.code === "E2BIG"
+          )
+        )
+          throw error;
+      }
       return new KernelFileSystemTree({
-        tree,
-        device: mount.device,
-        posix: this.#posix,
-        paths: {
+        mount: snapshot === undefined ? mount : { ...mount, storage: snapshot },
+        snapshot: snapshot !== undefined,
+        paths: this.#paths,
+        perPath: {
           lstat: (path) => this.lstatAsync(path),
           readdir: (path) => this.readdirAsync(path),
           readlink: (path) => this.readlink(path),
@@ -321,7 +333,7 @@ export class KernelFileSystem {
 
   /** True when an absolute path resolves through the descriptor table, which no storage write tracks. */
   resolvesThroughDescriptors(path: string): boolean {
-    return descriptorPathAlias(path) !== undefined || descriptorPathSuffix(path) !== undefined;
+    return resolvesThroughDescriptors(path);
   }
 
   get fileBytes(): KernelFileByteSelection {
