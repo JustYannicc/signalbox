@@ -26,15 +26,17 @@ export async function openClaudeOwnerRelease(
   assets: AssetFetcher,
 ) {
   const opened = await readClaudeQualificationAssets(claude.runtime.assets, assets);
-  const loaded = await loadHarnessRelease({
+  // Module bytes are read once, when an owner's loader materializes and verifies them.
+  const options = {
     identity: {
       artifactRef: selected.artifact.artifactRef,
       artifactHash: selected.artifact.artifactHash,
       sourceIdentity: selected.artifact.sourceIdentity,
     },
-    source: opened.source,
     ...opened.loaderConfig,
-  });
+    verifyPreparedModules: false,
+  };
+  const loaded = await loadHarnessRelease({ ...options, source: opened.source });
   if (loaded.plan.harness !== "claude-code") throw new Error("DEPLOY3_CLAUDE_PLAN_MISMATCH");
   const plan = loaded.plan;
   const packages: Record<string, string> = {};
@@ -44,6 +46,9 @@ export async function openClaudeOwnerRelease(
   if (!readRange) throw new Error("DEPLOY3_CLAUDE_RANGE_READER_MISSING");
   return {
     plan,
+    /** Handed to the thread's host, which then never reads this release again. */
+    verified: { options, loaded },
+    releaseVariants: { catalog: opened.claudeVariants, ledger: opened.ledger },
     modules: async (partition: "cli" | "sdk" | undefined) =>
       materializeHarnessProcessModules(
         await claudePreparedWorkerModules(
@@ -63,7 +68,7 @@ export async function openClaudeOwnerRelease(
  */
 export function claudeOwnerCode(input: {
   readonly compatibility: Compatibility;
-  readonly release: Awaited<ReturnType<typeof openClaudeOwnerRelease>>;
+  readonly release: Pick<Awaited<ReturnType<typeof openClaudeOwnerRelease>>, "plan" | "modules">;
   readonly sources: {
     readonly kernel: Source;
     readonly cli: Source;
