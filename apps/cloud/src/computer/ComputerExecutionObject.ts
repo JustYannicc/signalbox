@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
 import { ComputerProgramOwner } from "./ComputerProgramOwner.ts";
+import { COMPUTER_OWNER_UNAVAILABLE } from "./ComputerOwnerAvailability.ts";
 import type { ComputerProgramOwnerOptions } from "./ComputerProgramOwner.ts";
 import type { ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
 import type {
@@ -40,8 +41,7 @@ export class ComputerExecutionObject extends DurableObject<ComputerExecutionEnvi
     return !this.#closed && this.#owner !== undefined;
   }
   #current() {
-    if (this.#closed || this.#owner === undefined)
-      throw new Error("Computer execution owner is unavailable");
+    if (this.#closed || this.#owner === undefined) throw new Error(COMPUTER_OWNER_UNAVAILABLE);
     return this.#owner;
   }
   async registrations() {

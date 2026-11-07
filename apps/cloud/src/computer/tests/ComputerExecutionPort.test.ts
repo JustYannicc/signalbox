@@ -21,7 +21,7 @@ function computer() {
     }),
     configured: vi.fn(async () => owner !== undefined),
     registrations: vi.fn(async () => []),
-    admit: vi.fn(async () => {
+    admit: vi.fn(async (_id: string, ..._rest: unknown[]) => {
       if (owner === undefined) throw new Error("Computer execution owner is unavailable");
       return admission;
     }),
@@ -79,5 +79,46 @@ describe("Computer execution port", () => {
     const port = portFor(target);
     await expect(port.admit("one", {} as never, {} as never)).rejects.toThrow("unavailable");
     expect(target.configure).not.toHaveBeenCalled();
+  });
+
+  it("never retries a call's own failure, even right after another caller restored", async () => {
+    const target = computer();
+    const port = portFor(target);
+    await port.configure(configuration);
+    target.evict();
+    // B finds the Computer evicted and restores it; A lands on the restored owner and fails itself.
+    const evicted = target.admit.getMockImplementation()!;
+    target.admit.mockImplementation(async (...args: Parameters<typeof evicted>) => {
+      if (args[0] === "a") throw new Error("ENOENT");
+      return await evicted(...args);
+    });
+    const [b, a] = await Promise.allSettled([
+      port.admit("b", {} as never, {} as never),
+      port.admit("a", {} as never, {} as never),
+    ]);
+    expect(b).toEqual({ status: "fulfilled", value: admission });
+    expect(a).toMatchObject({ status: "rejected", reason: { message: "ENOENT" } });
+    expect(target.admit.mock.calls.filter(([id]) => id === "a")).toHaveLength(1);
+    expect(target.configure).toHaveBeenCalledTimes(2);
+  });
+
+  it("restores nothing once closed", async () => {
+    const target = computer();
+    const port = portFor(target);
+    await port.configure(configuration);
+    await port.close();
+    target.evict();
+    await expect(port.cancel("late" as never)).resolves.toBeUndefined();
+    await expect(port.admit("late", {} as never, {} as never)).rejects.toThrow("unavailable");
+    expect(target.configure).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the call's own error when the restore itself fails", async () => {
+    const target = computer();
+    const port = portFor(target);
+    await port.configure(configuration);
+    target.evict();
+    target.configured.mockRejectedValueOnce(new Error("facet aborted"));
+    await expect(port.admit("one", {} as never, {} as never)).rejects.toThrow("unavailable");
   });
 });

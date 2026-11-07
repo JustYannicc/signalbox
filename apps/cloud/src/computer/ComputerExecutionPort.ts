@@ -1,6 +1,7 @@
 import { RpcTarget } from "cloudflare:workers";
 import type { ComputerProgramOwnerPort } from "../kernel/KernelComputerAdmissionPort.ts";
 import type { ComputerExecutionConfiguration } from "./ComputerExecutionObject.ts";
+import { isComputerOwnerUnavailable } from "./ComputerOwnerAvailability.ts";
 
 interface Target extends ComputerProgramOwnerPort {
   configure(input: ComputerExecutionConfiguration): Promise<void>;
@@ -17,7 +18,7 @@ export class ComputerExecutionPort extends RpcTarget implements Omit<Target, "co
   readonly #target;
   #configuration: ComputerExecutionConfiguration | undefined;
   #restoring: Promise<boolean> | undefined;
-  #generation = 0;
+  #closed = false;
   constructor(target: Target) {
     super();
     this.#target = target;
@@ -36,31 +37,33 @@ export class ComputerExecutionPort extends RpcTarget implements Omit<Target, "co
     await this.#restored(() => this.#target.cancel(...args));
   }
   async close() {
+    this.#closed = true;
     await this.#target.close();
   }
   async #restored<A>(run: () => Promise<A>): Promise<A> {
-    const generation = this.#generation;
     try {
       return await run();
     } catch (error) {
-      // Retry only on a Computer that was restored since this call began; any other failure,
-      // including one from a configured Computer, is the call's own.
-      if (this.#generation === generation && !(await this.#restore())) throw error;
+      // Only the eviction's own failure is retried: any other failure, even one that lands just
+      // after another caller restored the Computer, is this call's result and may have applied.
+      if (!isComputerOwnerUnavailable(error) || !(await this.#restore())) throw error;
       return await run();
     }
   }
   /** Re-applies the configuration if the Computer lost it; concurrent callers share one restore. */
   async #restore() {
     const configuration = this.#configuration;
-    if (configuration === undefined) return false;
+    if (configuration === undefined || this.#closed) return false;
     this.#restoring ??= (async () => {
-      if (await this.#target.configured()) return false;
-      await this.#target.configure(configuration);
-      this.#generation++;
+      // Another caller may already have restored it; then the retry simply runs.
+      if (!(await this.#target.configured())) await this.#target.configure(configuration);
       return true;
-    })().finally(() => {
-      this.#restoring = undefined;
-    });
+    })()
+      // A failed restore leaves the call's own error as its result.
+      .catch(() => false)
+      .finally(() => {
+        this.#restoring = undefined;
+      });
     return await this.#restoring;
   }
 }
