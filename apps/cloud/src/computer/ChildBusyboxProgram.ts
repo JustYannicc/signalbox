@@ -7,6 +7,7 @@ import {
   type ChildWorkerProgramOptions,
 } from "./ChildWorkerProgram.ts";
 import { createWorkerBusyboxHost } from "./WorkerBusyboxHost.ts";
+import { parseGrepArguments } from "./gnu/GrepArguments.ts";
 
 export type ChildBusyboxProgramOptions = Omit<
   ChildWorkerProgramOptions<KernelBusyboxPort>,
@@ -106,36 +107,14 @@ function childArguments(executable: string, argv: readonly string[]) {
 }
 
 function grepArgumentInvocations(argv: readonly string[]) {
-  let options = true;
-  let pattern = false;
-  let recursive = false;
-  let listOnly = false;
-  const operandIndexes: number[] = [];
-  for (let index = 1; index < argv.length; index++) {
-    const argument = argv[index]!;
-    if (options && argument === "--") {
-      options = false;
-      continue;
-    }
-    if (options && (argument === "--include" || argument === "--exclude-dir")) {
-      index++;
-      continue;
-    }
-    if (options && (argument.startsWith("--include=") || argument.startsWith("--exclude-dir="))) {
-      continue;
-    }
-    if (options && /^-A\d{1,3}$/.test(argument) && Number(argument.slice(2)) <= 100) continue;
-    if (options && /^-[GEilnrv]+$/.test(argument)) {
-      recursive ||= argument.includes("r");
-      listOnly ||= argument.includes("l");
-      continue;
-    }
-    if (!pattern) {
-      pattern = true;
-      continue;
-    }
-    operandIndexes.push(index);
-  }
+  const parsed = parseGrepArguments(argv);
+  if (parsed.kind === "machine") return [argv];
+  const { flags, operandIndexes } = parsed;
+  const recursive = flags.has("r");
+  const listOnly = flags.has("l");
+  const count = flags.has("c");
+  const onlyMatching = flags.has("o");
+  const noFilename = flags.has("h") && !listOnly;
 
   const dotRootCount = operandIndexes.filter((index) => argv[index] === ".").length;
   if (recursive && dotRootCount > 0 && operandIndexes.length > 1) {
@@ -144,22 +123,31 @@ function grepArgumentInvocations(argv: readonly string[]) {
     return operandIndexes.map((operandIndex) => {
       const operand = argv[operandIndex]!;
       const rootArgs = argv.filter((_, index) => !operands.has(index) || index === operandIndex);
-      const rootFormat = operand === "." ? [dotRootFormat(listOnly)] : [];
-      return [rootArgs[0]!, "--jobs=1", ...rootFormat, "-H", ...rootArgs.slice(1)];
+      const rootFormat =
+        operand === "." && !noFilename ? [dotRootFormat(listOnly, count, onlyMatching)] : [];
+      return [
+        rootArgs[0]!,
+        "--jobs=1",
+        ...rootFormat,
+        ...(noFilename ? [] : ["-H"]),
+        ...rootArgs.slice(1),
+      ];
     });
   }
 
   // Ugrep trims the trailing slash from ./, so format this recursive root's output explicitly.
   const rootFormat =
-    recursive && operandIndexes.length === 1 && argv[operandIndexes[0]!] === "."
-      ? [dotRootFormat(listOnly)]
+    recursive && !noFilename && operandIndexes.length === 1 && argv[operandIndexes[0]!] === "."
+      ? [dotRootFormat(listOnly, count, onlyMatching)]
       : [];
   return [[argv[0]!, "--jobs=1", ...rootFormat, ...argv.slice(1)]];
 }
 
-function dotRootFormat(listOnly: boolean) {
+function dotRootFormat(listOnly: boolean, count: boolean, onlyMatching: boolean) {
   // %f is unconditional; %F only emits a path when -H is active.
-  return listOnly ? "--format=./%f%~" : "--format=./%F%N%O%~";
+  if (listOnly) return "--format=./%f%~";
+  if (count) return "--format=./%F%m%~";
+  return onlyMatching ? "--format=./%F%N%o%~" : "--format=./%F%N%O%~";
 }
 
 function combineGrepExits(exits: readonly KernelCommandExit[]): KernelCommandExit {
