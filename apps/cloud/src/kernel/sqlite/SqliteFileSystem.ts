@@ -1,12 +1,14 @@
 import type { PosixStorage } from "../PosixStorage.ts";
 import type { ChangeGenerationStorage } from "../ChangeGenerationStorage.ts";
 import type { KernelLowerFileSystemUpperStorage } from "../KernelLowerFileSystemUpperStorage.ts";
+import type { SnapshotStorage } from "../KernelStorageSnapshot.ts";
 import { SqliteChunks } from "./SqliteChunks.ts";
 import { SqliteInodes } from "./SqliteInodes.ts";
 import { type FacetStorage, firstRow } from "./SqliteDatabase.ts";
 
 import { SqliteHydration } from "./SqliteHydration.ts";
 import { SqlitePosixMetadata } from "./SqlitePosixMetadata.ts";
+import { readSqliteSnapshot } from "./SqliteSnapshot.ts";
 
 export class PendingContentError extends Error {
   readonly code = "EAGAIN";
@@ -100,8 +102,12 @@ export function createSqliteFileSystem(storage: FacetStorage, nowNs: () => bigin
     inodes.stat(inode);
     if (hydration.pending(inode)) throw new PendingContentError(inode);
   };
-  const fs: PosixStorage & ChangeGenerationStorage & KernelLowerFileSystemUpperStorage = {
+  const fs: PosixStorage &
+    ChangeGenerationStorage &
+    KernelLowerFileSystemUpperStorage &
+    SnapshotStorage = {
     posix,
+    snapshot: (maxEntries) => readSqliteSnapshot(storage, maxEntries),
     lowerOverlay: {
       isLowerPathHidden: inodes.isLowerPathHidden.bind(inodes),
       isStagingPath: inodes.isStagingPath.bind(inodes),
