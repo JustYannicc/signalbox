@@ -40,7 +40,9 @@ interface Env {
   readonly POOLS: DurableObjectNamespace<LocalPool>;
   readonly THREADS: DurableObjectNamespace<LocalThread>;
   readonly OBSERVATIONS: DurableObjectNamespace<OrdinaryObservations>;
+  readonly GATES: DurableObjectNamespace<MachineGate>;
   readonly LOADER: WorkerLoader;
+  readonly HELD_MACHINE?: boolean;
   readonly REAL_OWNERS?: boolean;
   readonly FAILED_METADATA?: boolean;
   readonly KERNEL_SOURCE: string;
@@ -57,6 +59,33 @@ export class OrdinaryObservations extends DurableObject {
   }
   async snapshot() {
     return [...this.#events];
+  }
+}
+
+/** Holds the thread's machine factory until the scenario releases or fails it. */
+export class MachineGate extends DurableObject {
+  readonly #gate = Promise.withResolvers<void>();
+  readonly #entered = Promise.withResolvers<void>();
+  #builds = 0;
+  #released = false;
+  async hold() {
+    this.#builds++;
+    this.#entered.resolve();
+    await this.#gate.promise;
+  }
+  async entered() {
+    await this.#entered.promise;
+  }
+  release() {
+    this.#released = true;
+    this.#gate.resolve();
+  }
+  fail() {
+    this.#released = true;
+    this.#gate.reject(new Error("The held machine failed."));
+  }
+  state() {
+    return { builds: this.#builds, released: this.#released };
   }
 }
 
@@ -109,6 +138,8 @@ export class LocalPool extends LocalPoolObject {
 
 const ThreadBase = createLocalClaudeThreadObject<Env, string>((ctx, env, configuration) =>
   Effect.gen(function* () {
+    if (env.HELD_MACHINE)
+      yield* Effect.promise(() => env.GATES.getByName(configuration.threadId).hold());
     const input = yield* makeContinuationHostInputs(
       {
         storage: ctx.storage,
@@ -179,6 +210,14 @@ const ThreadBase = createLocalClaudeThreadObject<Env, string>((ctx, env, configu
 );
 
 export class LocalThread extends ThreadBase {
+  /** Answers without the binding, so it returns only while nothing holds the object's lock. */
+  async probe() {
+    return this.ctx.id.toString();
+  }
+  async bound() {
+    await this.getBinding();
+    return true;
+  }
   async proofState() {
     const binding = await this.getBinding();
     await binding.afterChange();
@@ -207,9 +246,79 @@ export class LocalThread extends ThreadBase {
   }
 }
 
+const inspect = (error: unknown) => NodeUtil.inspect(error, { depth: 30 });
+
+/** Holds the thread's machine factory while the scenario drives the object around its build. */
+async function heldScenario(env: Env, scenario: string | null) {
+  const gate = env.GATES.getByName("thread");
+  const user = env.USERS.get(env.USERS.idFromName("local:thread:user"));
+  const pool = env.POOLS.get(env.POOLS.idFromName("local:thread:pool"));
+  const thread = env.THREADS.get(env.THREADS.idFromName("thread"));
+  const done = Promise.withResolvers<void>();
+  const hosting = Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* createLocalClaudeThreadHost({
+          modelSelection: selection,
+          modelTransport: async () => new Response("unused"),
+          machine: {
+            type: "workerd",
+            threadId: "thread",
+            objects: { user: env.USERS, pool: env.POOLS, thread: env.THREADS },
+          },
+        });
+        yield* Effect.promise(() => done.promise);
+      }),
+    ),
+  ).then(() => "hosted", inspect);
+  await gate.entered();
+  // The machine factory is held mid-build, and the object still answers.
+  await thread.probe();
+  const order: string[] = [];
+  const bound = thread.bound().then(
+    () => "bound",
+    (error: unknown) => `bound failed: ${String(error)}`,
+  );
+  void bound.then((outcome) => order.push(outcome));
+  if (scenario === "join") {
+    const owner = await user.initialize();
+    using usercap = await user.capability();
+    using poolcap = await pool.capability();
+    const joined = thread.configure(
+      { threadId: "thread", owner, modelSelection: selection },
+      usercap,
+      poolcap,
+    );
+    order.push("released");
+    await gate.release();
+    await joined;
+    await bound;
+    done.resolve();
+    return { hosted: await hosting, order, gate: await gate.state() };
+  }
+  if (scenario === "fail") {
+    await gate.fail();
+    const outcome = await bound;
+    done.resolve();
+    return { hosted: await hosting, bound: outcome, gate: await gate.state() };
+  }
+  await thread.dispose();
+  const atDispose = await gate.state();
+  const hosted = await hosting;
+  const outcome = await bound;
+  await gate.release();
+  return { hosted, bound: outcome, atDispose };
+}
+
 export default {
   async fetch(_request: Request, env: Env) {
-    const interrupt = new URL(_request.url).pathname === "/interrupt";
+    const url = new URL(_request.url);
+    if (url.pathname === "/held")
+      return heldScenario(env, url.searchParams.get("scenario")).then(
+        (result) => Response.json(result),
+        (error: unknown) => Response.json({ error: inspect(error) }, { status: 500 }),
+      );
+    const interrupt = url.pathname === "/interrupt";
     try {
       return await Effect.runPromise(
         Effect.scoped(
