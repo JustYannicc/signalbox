@@ -13,6 +13,7 @@ import {
   type GnuCommandMachineDecision,
   type GnuCommandQualification,
 } from "./gnu/CommandQualification.ts";
+import { qualifyTrCommand } from "./TrCommand.ts";
 import { qualifySed } from "./gnu/SedCommand.ts";
 import { standardChildProgramName } from "./ChildProgramPaths.ts";
 export type {
@@ -38,6 +39,8 @@ export function qualifyGnuCommandWithFiles(
   command: KernelCommand,
   canReplace?: (file: string) => boolean,
 ): GnuCommandQualification {
+  const tr = qualifyTrCommand(command);
+  if (tr !== undefined) return tr;
   const program = standardChildProgramName(command.executable);
   if (program !== "sed" && program !== "grep") return QUALIFIED;
   const environmentIssue = unqualifiedEnvironment(command.env, program);

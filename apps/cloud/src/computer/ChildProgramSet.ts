@@ -15,7 +15,7 @@ export const CHILD_COREUTILS_COMMANDS = Object.freeze([
 
 export type ChildCoreutilsCommand = (typeof CHILD_COREUTILS_COMMANDS)[number];
 
-export const CHILD_BUSYBOX_APPLETS = Object.freeze(["cat", "find", "touch"] as const);
+export const CHILD_BUSYBOX_APPLETS = Object.freeze(["cat", "find", "touch", "tr", "yes"] as const);
 
 export const CHILD_PRODUCT_BUSYBOX_APPLETS = Object.freeze(["env", "id", "sort"] as const);
 
@@ -27,6 +27,8 @@ export const CHILD_PROGRAM_PATHS = Object.freeze({
   sed: "/bin/sed",
   grep: "/bin/grep",
   touch: "/bin/touch",
+  tr: "/bin/tr",
+  yes: "/bin/yes",
   rg: "/bin/rg",
   ugrep: "/bin/ugrep",
   echo: "/bin/echo",
