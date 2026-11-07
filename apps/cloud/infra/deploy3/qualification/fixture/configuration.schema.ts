@@ -76,6 +76,7 @@ export const ConfigurationSchema = Schema.Struct({
     cliSource: Text,
     computerSource: Text,
     environmentPackages: Schema.Record(Schema.String, AssetPinSchema),
+    machineInventoryAsset: AssetPinSchema,
     expected: Schema.Struct({ baseline: PreparedRelease, hooks: PreparedRelease }),
   }),
 });

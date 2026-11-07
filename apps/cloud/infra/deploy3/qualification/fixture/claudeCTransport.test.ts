@@ -64,6 +64,11 @@ async function setup() {
       computerSource: "export class ComputerExecutionObject {}",
       sdkHostSource: "synthetic-sdk-host",
       environmentPackages: {},
+      machineInventoryAsset: {
+        path: "qualifier/machine-inventory/synthetic.json",
+        bytes: 2,
+        sha256: "0".repeat(64),
+      },
       expected: { baseline: prepared("baseline"), hooks: prepared("hooks") },
     },
   };

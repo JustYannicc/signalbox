@@ -100,6 +100,7 @@ export class QualifierCapabilities<
       runtime: config.claude.runtime,
       expected: config.claude.expected[variant],
       environmentPackages: config.claude.environmentPackages,
+      machineInventory: config.claude.machineInventoryAsset,
       versions: await (this.#ownerVersions ??= this.ownerVersions()),
     };
   }

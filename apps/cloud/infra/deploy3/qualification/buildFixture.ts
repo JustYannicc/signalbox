@@ -206,6 +206,13 @@ export async function buildCombinedFixture(raw: unknown) {
   );
   if (!productionExports.length || productionExports.some((name) => !fixtureExports.has(name)))
     throw new Error("DEPLOY3_PRODUCTION_EXPORTS_MISSING");
+  const inventoryBytes = Buffer.from(JSON.stringify(configuration.machineInventory));
+  const inventorySha256 = hash(inventoryBytes);
+  const machineInventoryAsset = {
+    path: `qualifier/machine-inventory/${inventorySha256}.json`,
+    bytes: inventoryBytes.length,
+    sha256: inventorySha256,
+  };
   const config = {
     ...configuration,
     expectedRelease,
@@ -229,6 +236,7 @@ export async function buildCombinedFixture(raw: unknown) {
         workingSet: input.claudeRuntime.workingSet,
       },
       environmentPackages: environmentPackages.assets,
+      machineInventoryAsset,
       facetSource: await NodeFSP.readFile(
         NodePath.join(output, "qualifier-claude-implementation.mjs"),
         "utf8",
@@ -264,6 +272,10 @@ export async function buildCombinedFixture(raw: unknown) {
       { flag: "wx" },
     );
   await environmentPackages.write(assets);
+  await NodeFSP.mkdir(NodePath.join(assets, "qualifier/machine-inventory"));
+  await NodeFSP.writeFile(NodePath.join(assets, machineInventoryAsset.path), inventoryBytes, {
+    flag: "wx",
+  });
   const configBytes = Buffer.from(json(config));
   validateQualifierFacetEnvironments(
     deploy3QualifierEnvironmentInputs({

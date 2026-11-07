@@ -4,7 +4,6 @@ import { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   narrowHarnessCProductCapabilities,
   productExecutor,
-  productMachineInventory,
   productProgramBindings,
   productReleaseBindings,
 } from "../../../../src/harness/HarnessCProductCapabilities.ts";
@@ -20,6 +19,7 @@ import { createQualifierClaudeFacetEnvironment } from "../claudeFacetEnvironment
 import { createQualifierShardEnvironment } from "../shardEnvironment.ts";
 import { requireClaudeAuthorities } from "./claudeAuthorities.ts";
 import { readClaudeQualificationInputs } from "./claudeConfiguration.ts";
+import { readMachineInventory } from "./configuration.ts";
 import {
   CLAUDE_OWNER_COMPATIBILITY,
   claudeOwnerCode,
@@ -121,8 +121,9 @@ const claudeThreadMachine: LocalClaudeThreadMachineFactory<
     const programs = yield* attempt("The Claude program seed is unavailable", () =>
       productProgramBindings("claude-code", capabilities.programs),
     );
+    // Deployed, pulling this 16,880-entry inventory from the proof object took about 30 seconds.
     const machineInventory = yield* attempt("The Claude machine inventory is unavailable", () =>
-      productMachineInventory("claude-code", capabilities.machine),
+      readMachineInventory(env.PROGRAM_ASSETS, inputs.machineInventory),
     );
     const release = yield* attempt("The Claude owner release could not open", () =>
       openClaudeOwnerRelease(inputs.expected, inputs, env.PROGRAM_ASSETS),
