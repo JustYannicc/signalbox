@@ -45,14 +45,15 @@ model {
     draft = entity 'Draft'
     device = entity 'Device'
     pool = entity 'Pool'
-    account = entity 'Account' {
+    account = entity 'Pool account' {
       description 'subscription or API key'
     }
     usageRow = entity 'Usage row' {
       description 'tokens · compute · storage'
     }
-    connection = entity 'Connection' {
-      description 'one credential'
+    // The id predates the words in CONTEXT.md: this is an account (avoid: connection).
+    connection = entity 'Account' {
+      description 'one sign-in to a connector'
     }
     tool = entity 'Tool'
     secretRef = entity 'Secret reference' {
@@ -66,7 +67,7 @@ model {
     computer = entity 'Computer' {
       description 'cache, leased by a thread'
     }
-    base = entity 'Base' {
+    snapshot = entity 'Snapshot' {
       description '(drive, recipeHash, sha)'
     }
     automation = entity 'Automation'
@@ -81,7 +82,7 @@ model {
       description 'AGENTS.md block'
     }
     app = entity 'App' {
-      description 'folder app'
+      description 'built from connectors'
     }
     listing = entity 'Listing' {
       description 'marketplace item · code or text + needs'
@@ -137,8 +138,8 @@ model {
     connection -[owns]-> tool 'manifest'
     source -> connection 'narrows'
     drive -[owns]-> workingRef 'forks'
-    drive -[owns]-> base 'has'
-    computer -> base 'VM forked from'
+    drive -[owns]-> snapshot 'has'
+    computer -> snapshot 'VM forked from'
     automation -[owns]-> thread 'runs'
     device -> level 'home'
     draft -> place 'at'

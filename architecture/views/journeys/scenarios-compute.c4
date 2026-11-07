@@ -83,7 +83,7 @@ views {
     #decided
     variant sequence
     title "Scenarios/Compute/Machines/Archive With Machine"
-    description "What happens to a thread's machine when the thread is archived and later unarchived? Decided: #915 (2026-10-17) archived → delete the machine; unarchived → restore the Drive, resume the harness, create a machine from the ready snapshot; the provider's disk is never the durable copy. #119 (2026-10-18) archiving never merges, R2 is the full record, resumed threads start on the current Base. SCN-193 · not v1 (Computer, Drive and threads come after v1)."
+    description "What happens to a thread's machine when the thread is archived and later unarchived? Decided: #915 (2026-10-17) archived → delete the machine; unarchived → restore the Drive, resume the harness, create a machine from the ready snapshot; the provider's disk is never the durable copy. #119 (2026-10-18) archiving never merges, R2 is the full record, resumed threads start on the current snapshot. SCN-193 · not v1 (Computer, Drive and threads come after v1)."
 
     include personA, signalbox.web, signalbox.thread.threadActor, signalbox.harness, signalbox.computer, signalbox.bases, signalbox.drive, platform.boxd
     include signalbox, platform
@@ -132,10 +132,10 @@ views {
     }
     opt "a command needs a machine" {
       signalbox.harness -> signalbox.computer "exec"
-      signalbox.computer -> signalbox.bases "current ready Base" {
+      signalbox.computer -> signalbox.bases "current ready snapshot" {
         navigateTo work_bases_lease
         notes '''
-          - Folder Personal's current Base, not the one the thread started on
+          - Folder Personal's current snapshot, not the one the thread started on
         '''
       }
       signalbox.computer -> platform.boxd "fork fresh VM" {
@@ -178,7 +178,7 @@ views {
     }
     alt "workspace sync and policy" {
       when "ready" {
-        signalbox.computer -> signalbox.bases "warm Base" {
+        signalbox.computer -> signalbox.bases "warm snapshot" {
           navigateTo work_bases_lease
         }
         signalbox.computer -> platform.boxd "fork VM"
@@ -350,7 +350,7 @@ views {
     signalbox.web -> personB "reads reply"
     opt "agent reruns" {
       signalbox.harness -> signalbox.computer "rerun command"
-      signalbox.computer -> signalbox.bases "current Base"
+      signalbox.computer -> signalbox.bases "current snapshot"
       signalbox.computer -> platform.boxd "fork fresh VM" {
         navigateTo work_turns_do_vm_recovery
       }
@@ -711,12 +711,12 @@ views {
       '''
     }
     personB -> signalbox.web "new thread in Team"
-    signalbox.web -> signalbox.tree "resolve Base" {
+    signalbox.web -> signalbox.tree "resolve snapshot" {
       notes '''
-        - Via the client gateway; nearest Base up the chain: Team, then Company
+        - Via the client gateway; nearest snapshot up the chain: Team, then Company
       '''
     }
-    signalbox.tree -> signalbox.bases "nearest Base" {
+    signalbox.tree -> signalbox.bases "nearest snapshot" {
       navigateTo work_bases_lease
     }
     alt "generation still cached?" {

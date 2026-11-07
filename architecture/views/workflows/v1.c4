@@ -5,7 +5,7 @@
 // inside the organization, which appears only as the sharing boundary. Tools are each person's own and
 // never shared. Not in this release: folders, admin roles, organizations beyond the sharing boundary,
 // domain auto-join, API keys in pools, shared tools, Codex computer history, threads, harness runtime,
-// computer, Bases, drive, assistant, automations.
+// computer, Snapshots, drive, assistant, automations.
 // Modules are black boxes; the Gateway appears only as its two ports. The harness sees a normal provider
 // and normal MCP servers.
 views {

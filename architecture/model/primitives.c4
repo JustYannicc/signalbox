@@ -1,0 +1,38 @@
+// The primitives everything is derived from (#1507, words from #1509): identities, connectors, accounts,
+// apps, records and grants. Accounts are domain.connection (old id), grants domain.grant. The hierarchy is
+// one app over these, so nothing here depends on levels or placements.
+model {
+  extend domain {
+    identity = entity 'Identity' {
+      description 'person or agent'
+    }
+    agent = entity 'Agent' {
+      description 'own identity · acts for anything accountable'
+    }
+    agentGrant = entity 'Agent grant' {
+      description 'narrows one agent'
+    }
+    connector = entity 'Connector' {
+      description 'one outside service · its sign-in'
+    }
+    accountLink = entity 'Link' {
+      description 'account → app'
+    }
+    record = entity 'Record' {
+      description 'app · kind · id'
+    }
+  }
+
+  domain.person -> domain.identity 'is an'
+  domain.agent -> domain.identity 'is an'
+  domain.agent -> domain.identity 'accountable to'
+  domain.agent -> domain.person 'chain ends at'
+  domain.agent -[owns]-> domain.agentGrant 'has'
+  domain.agentGrant -> domain.grant 'narrows'
+  domain.grant -> domain.identity 'given to'
+  domain.connection -> domain.connector 'signs in to'
+  domain.accountLink -> domain.connection 'account'
+  domain.accountLink -> domain.app 'app'
+  domain.app -[owns]-> domain.record 'owns'
+  domain.app -> domain.connector 'built from'
+}

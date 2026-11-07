@@ -1,10 +1,10 @@
 // State machine for one base. The walk through it with people and modules is the dynamic view state_base.
 model {
-  smBase = state 'Base lifecycle' {
+  smBase = state 'Snapshot lifecycle' {
     building = state 'Building' { description 'builder machine of a run thread' }
     ready = state 'Ready' { description 'warm snapshot of last green main' }
     failed = state 'Failed'
-    active = state 'Active' { description 'the one Base new VMs fork from' }
+    active = state 'Active' { description 'the one snapshot new VMs fork from' }
     superseded = state 'Superseded' { description 'leases still live' }
     retired = state 'Retired' { description 'zero live leases' }
 
@@ -18,8 +18,8 @@ model {
 }
 views {
   view state-base of smBase {
-    title 'States/Base/State machine'
-    description 'How does one warm Base get built, become the one VMs fork from, and retire? Start: green. End: gray. Click the frame for the walk with people and modules (state_base).'
+    title 'States/Snapshot/State machine'
+    description 'How does one warm snapshot get built, become the one VMs fork from, and retire? Start: green. End: gray. Click the frame for the walk with people and modules (state_base).'
     include *
     include smBase with { navigateTo state_base }
     style smBase.building { color green }

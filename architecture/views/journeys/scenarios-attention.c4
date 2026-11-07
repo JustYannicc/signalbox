@@ -88,9 +88,9 @@ views {
       }
     }
     opt 'real commands run' {
-      signalbox.harness -> signalbox.computer 'Forks from Base' {
+      signalbox.harness -> signalbox.computer 'Forks from snapshot' {
         notes '''
-          - A VM forks from the warm Base only if the agent runs real commands.
+          - A VM forks from the warm snapshot only if the agent runs real commands.
         '''
       }
     }

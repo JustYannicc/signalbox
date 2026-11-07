@@ -11,7 +11,7 @@ model {
 }
 views {
   view state-placement of smPlacement {
-    title 'States/Placement/State machine'
+    title 'Apps/Hierarchy/States/Placement/State machine'
     description 'How does one placement on a level stop reaching the threads below it? Start: green. End: gray. Click the frame for the walk with people and modules (state_placement).'
     include *
     include smPlacement with { navigateTo state_placement }

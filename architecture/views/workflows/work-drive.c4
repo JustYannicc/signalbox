@@ -239,7 +239,7 @@ views {
         }
         hier.company.team.runThread -> signalbox.computer 'native git' {
           notes '''
-            - The run's computer escalates to a VM forked from the Base.
+            - The run's computer escalates to a VM forked from the snapshot.
           '''
         }
         signalbox.drive.repoActor <- hier.company.team.runThread 'merged tree' {
@@ -261,7 +261,7 @@ views {
         parallel {
           signalbox.drive.repoActor -> signalbox.automations 'main advanced' {
             notes '''
-              - `drive.main.advanced` starts Git-host sync, CI and Base refresh (default automations).
+              - `drive.main.advanced` starts Git-host sync, CI and snapshot refresh (default automations).
             '''
           }
           signalbox.drive.repoActor -> hier.company.team.sharedThread 'Accepted{rev}' {
@@ -822,10 +822,10 @@ views {
         }
       }
       else 'regenerable' {
-        signalbox.computer -> signalbox.computer 'hydrate from Base' {
+        signalbox.computer -> signalbox.computer 'hydrate from snapshot' {
           navigateTo work_computer_paths_regenerable
           notes '''
-            - From the attached VM, or else the Base's chunks in R2. A read never forks a VM.
+            - From the attached VM, or else the snapshot's chunks in R2. A read never forks a VM.
           '''
         }
       }

@@ -1,0 +1,53 @@
+// The layers (#1504): one box each, for the top view. A layer holds no elements of its own; its view
+// (Overview/Layers/...) shows the modules, apps and primitives that belong to it, so every element stays
+// defined once. The Runtime is left out of the post-v1 map (#1505): kept, tagged #out-of-map.
+model {
+  layers = system 'Layers' {
+    identity = layer 'Identity' {
+      icon bootstrap:person-badge
+      description 'people · agents · grants'
+    }
+    inference = layer 'Inference' {
+      icon bootstrap:cpu
+      description 'model gateway · pools'
+    }
+    connectors = layer 'Connectors' {
+      icon bootstrap:plug
+      description 'connectors · accounts · links'
+    }
+    apps = layer 'Apps' {
+      icon bootstrap:window-stack
+      description 'pool · goals · workflows · browser · hierarchy'
+    }
+    harness = layer 'Harness' {
+      icon bootstrap:robot
+      context = layer 'Context & orchestration' {
+        description 'official Claude Code · Codex'
+      }
+      runtime = layer 'Runtime' {
+        #out-of-map
+        description 'loop · state · triggers'
+      }
+    }
+    environment = layer 'Environment' {
+      icon bootstrap:terminal
+      description 'computer · machine · snapshot'
+    }
+    clients = layer 'Clients' {
+      icon bootstrap:display
+      description 'web · desktop · mobile · CLI'
+    }
+
+    clients -> apps 'use'
+    clients -> identity 'sign in'
+    apps -> connectors 'built from'
+    apps -> identity 'grants'
+    harness.context -[model]-> inference '/v1'
+    harness.context -[tool]-> apps '/mcp'
+    harness.runtime -> harness.context 'session profile'
+    harness.context -> environment 'commands · files'
+  }
+
+  personA -> layers.clients 'use'
+  personA -> layers.harness.context 'run locally'
+}
