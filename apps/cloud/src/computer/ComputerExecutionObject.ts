@@ -35,6 +35,10 @@ export class ComputerExecutionObject extends DurableObject<ComputerExecutionEnvi
     });
     this.#owner = new ComputerProgramOwner({ ...config, capacity, loader: this.env.CHILD_WORKERS });
   }
+  /** The owner lives only in memory; an evicted facet answers false until it is configured again. */
+  async configured() {
+    return !this.#closed && this.#owner !== undefined;
+  }
   #current() {
     if (this.#closed || this.#owner === undefined)
       throw new Error("Computer execution owner is unavailable");
