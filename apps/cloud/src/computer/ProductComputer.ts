@@ -23,7 +23,14 @@ import { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
 
 export interface ProductComputerOptions extends Omit<
   CommandGatewayOptions,
-  "processes" | "loader" | "systemIdentity" | "hostname" | "machine" | "resolver" | "namespace"
+  | "processes"
+  | "loader"
+  | "systemIdentity"
+  | "hostname"
+  | "machine"
+  | "resolver"
+  | "namespace"
+  | "physicalCapacity"
 > {
   readonly threadId: string;
   readonly capacity: CommandGatewayOptions["capacity"] &
@@ -80,6 +87,11 @@ export function createProductComputer(options: ProductComputerOptions) {
           options.loader.compiledModules,
           options.loader.limits,
         );
+  // Both pools issue dynamic calls from this DO context, whose physical limit is ten.
+  const physicalCapacity = new ChildWorkerCapacity(10, {
+    owner: `${options.capacity.owner}/worker-context`,
+    RESIDENT_BYTE_LIMIT: String(options.capacity.residentByteLimit),
+  });
   let gateway: ReturnType<typeof createCommandGateway>;
   try {
     const codeModeHost =
@@ -88,12 +100,32 @@ export function createProductComputer(options: ProductComputerOptions) {
         : (() => {
             if (loader.cells === undefined)
               throw new TypeError("Product Computer requires a CodeMode cell loader");
+            const cells = new ChildWorkerCapacity(options.capacity.limit, {
+              owner: `${options.capacity.owner}/code-mode`,
+              RESIDENT_BYTE_LIMIT: String(options.capacity.residentByteLimit),
+            });
             return createCodeModeHostProgram({
               loader: loader.cells,
-              capacity: new ChildWorkerCapacity(options.capacity.limit, {
-                owner: `${options.capacity.owner}/code-mode`,
-                RESIDENT_BYTE_LIMIT: String(options.capacity.residentByteLimit),
-              }),
+              capacity: {
+                async acquire(signal) {
+                  const logical = await cells.acquire(signal, undefined);
+                  try {
+                    const physical = await physicalCapacity.acquire(signal, undefined);
+                    return {
+                      async release() {
+                        try {
+                          await physical.release();
+                        } finally {
+                          await logical.release();
+                        }
+                      },
+                    };
+                  } catch (error) {
+                    await logical.release();
+                    throw error;
+                  }
+                },
+              },
               code: programs.codeMode,
             });
           })();
@@ -103,6 +135,7 @@ export function createProductComputer(options: ProductComputerOptions) {
       systemIdentity,
       hostname: systemIdentity.hostname,
       loader,
+      physicalCapacity,
       processes,
       ...(codeModeHost === undefined ? {} : { codeModeHost }),
       resolver,

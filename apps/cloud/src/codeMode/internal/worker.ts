@@ -1,18 +1,18 @@
-import { WorkerEntrypoint } from "cloudflare:workers";
+import { WorkerEntrypoint, abortIsolate } from "cloudflare:workers";
 import { installCodeModeGlobals } from "./globals.ts";
 import { captureCodeModeEffects, CodeModePump } from "./pump.ts";
 import { restrictCodeModeGlobals } from "./scope.ts";
 import "./upstreamSettled.js";
 import type {
   CodeModeCellCompletion,
-  CodeModeCellEvents,
+  CodeModeWorkerEvents,
   CodeModeCellInvocation,
 } from "../Types.ts";
 
 export default class CodeModeCellWorker extends WorkerEntrypoint {
   async run(
     input: CodeModeCellInvocation,
-    events: CodeModeCellEvents,
+    events: CodeModeWorkerEvents,
   ): Promise<CodeModeCellCompletion> {
     const effects = captureCodeModeEffects();
     const runtime = installCodeModeGlobals(input);
@@ -21,6 +21,7 @@ export default class CodeModeCellWorker extends WorkerEntrypoint {
     let terminated = false;
     let error: string | null = null;
     let finished = false;
+    let cleanupFailure: unknown;
     const capture = (cause: unknown) => {
       if (error === null && !runtime.isExit(cause))
         error = cause instanceof Error ? (cause.stack ?? cause.message) : String(cause);
@@ -68,16 +69,25 @@ export default class CodeModeCellWorker extends WorkerEntrypoint {
       revoke();
       try {
         await events.closeCallbacks();
-      } finally {
-        try {
-          await pump.close();
-        } finally {
-          // A cancellation race or cleared timer cannot stand in for actual ESM settlement.
-          await evaluated;
-          await events.stopped();
-        }
+      } catch (cause) {
+        cleanupFailure = cause;
+        capture(cause);
       }
+      try {
+        await pump.close();
+      } catch (cause) {
+        cleanupFailure ??= cause;
+        capture(cause);
+      }
+      if (terminated) {
+        // A cleared timer leaves top-level await pending forever. Destroy this anonymous isolate.
+        await events.aborting(error);
+        abortIsolate("CodeMode cell terminated");
+      }
+      await evaluated;
+      await events.stopped();
     }
-    return { terminated, error, writes: terminated ? {} : runtime.writes() };
+    if (cleanupFailure !== undefined) throw cleanupFailure;
+    return { terminated, error, writes: runtime.writes() };
   }
 }

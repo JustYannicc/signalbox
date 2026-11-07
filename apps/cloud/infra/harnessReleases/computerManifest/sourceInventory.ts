@@ -1,3 +1,4 @@
+import { preparedProgramEntries } from "../../childPrograms/programEntries.ts";
 import {
   canonicalComputerJson,
   compareText,
@@ -13,23 +14,11 @@ export function verifyAndNormalizePreparedSourceInventory(
   const frozen = new Map(sourceFreeze.files.map((file) => [file.path, file]));
   const generated = new Map<string, { readonly bytes: number; readonly sha256: string }>();
   const uniquePrograms = uniquePreparedPrograms(prepared.programs);
-  const expectedProgramNames = {
-    bash: prepared.programs.bash,
-    busyboxCat: prepared.programs.busyboxCat,
-    busyboxApplets: prepared.programs.busyboxApplets,
-    productBusyboxApplets: prepared.programs.productBusyboxApplets,
-    ripgrep: prepared.programs.ripgrep,
-    coreutils: Object.values(prepared.programs.coreutils)[0]!,
-    git: prepared.programs.git,
-    sed: prepared.programs.sed,
-    jq: prepared.programs.jq,
-    ugrep: prepared.programs.ugrep,
-  };
+  const expectedProgramNames = Object.fromEntries(preparedProgramEntries(prepared.programs));
   const inventoryPrograms = prepared.sourceInventory.programs;
   if (
     Object.keys(inventoryPrograms).length !== Object.keys(expectedProgramNames).length ||
-    Object.keys(expectedProgramNames).some((name) => {
-      const source = expectedProgramNames[name as keyof typeof expectedProgramNames];
+    Object.entries(expectedProgramNames).some(([name, source]) => {
       const recorded = inventoryPrograms[name];
       return (
         recorded === undefined ||
@@ -98,18 +87,7 @@ export function verifyAndNormalizePreparedSourceInventory(
 }
 
 function uniquePreparedPrograms(programs: PreparedChildPrograms["programs"]) {
-  const values = [
-    programs.bash,
-    programs.busyboxCat,
-    programs.busyboxApplets,
-    programs.productBusyboxApplets,
-    programs.ripgrep,
-    Object.values(programs.coreutils)[0]!,
-    programs.git,
-    programs.sed,
-    programs.jq,
-    programs.ugrep,
-  ];
+  const values = preparedProgramEntries(programs).map(([, code]) => code);
   const unique = new Map<string, ChildProgramSourceCode>();
   for (const code of values) {
     if (!code.entrypoint) throw new Error("TRUSTED_COMPUTER_PROGRAM_ENTRYPOINT_MISSING");

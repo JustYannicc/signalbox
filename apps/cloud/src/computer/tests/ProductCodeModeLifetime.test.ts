@@ -7,6 +7,8 @@ import { childBusyboxFixture } from "../childBusyboxTesting.ts";
 import { emptyMachineFilesFixture, machineInventoryFixture } from "../machineInventoryTesting.ts";
 import type { CodeModeCellEvents } from "../../codeMode/Types.ts";
 
+vi.mock("evlog", () => ({ log: { warn: vi.fn() } }));
+
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 it.each(["normal", "local-only"] as const)(

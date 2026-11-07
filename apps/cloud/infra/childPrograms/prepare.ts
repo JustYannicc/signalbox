@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - local packaging hashes verified program bytes.
+import { preparedProgramEntries } from "./programEntries.ts";
 import {
   CHILD_BUSYBOX_APPLETS,
   CHILD_PRODUCT_BUSYBOX_APPLETS,
@@ -18,6 +20,7 @@ import { PRODUCT_COMPUTER_BUSYBOX_ARTIFACT } from "../../src/kernel/KernelBusybo
 import { KERNEL_JQ_ARTIFACT } from "../../src/kernel/KernelJqProgram.ts";
 import { prepareBasePrograms } from "./basic.ts";
 import { prepareCodeModeHost } from "../codeMode/prepare.ts";
+import * as NodeCrypto from "node:crypto";
 import { CODE_MODE_HOST_EXECUTABLE } from "../../src/computer/CodeModeManifest.ts";
 import {
   readPinnedGitTemplates,
@@ -26,7 +29,6 @@ import {
 } from "./gitTemplates.ts";
 
 import {
-  programInventory,
   recordFile,
   byPath,
   type ChildProgramSourceRecord,
@@ -173,6 +175,16 @@ export async function prepareChildPrograms(
   const gitTemplates = await readPinnedGitTemplates(programDir);
   const codeMode = await prepareCodeModeHost({ cloudRoot });
   for (const source of codeMode.inventory.sources) sources.set(source.path, source);
+  const codeModeProgram = Object.freeze({ ...codeMode.code, entrypoint: "code-mode-cell" });
+  for (const [path, module] of Object.entries(codeModeProgram.modules)) {
+    const bytes = new TextEncoder().encode(typeof module === "string" ? module : module.js);
+    const record = {
+      path: `generated/${codeModeProgram.entrypoint}/${path}`,
+      bytes: bytes.byteLength,
+      sha256: digest(bytes),
+    };
+    sources.set(record.path, record);
+  }
   for (const file of gitTemplates.dataFiles) {
     artifacts.set(file.path, {
       path: file.path,
@@ -186,6 +198,7 @@ export async function prepareChildPrograms(
     "infra/childPrograms/basic.ts",
     "infra/childPrograms/runtime.ts",
     "infra/childPrograms/programCodes.ts",
+    "infra/childPrograms/programEntries.ts",
     "infra/childPrograms/packageGraph.ts",
     "infra/childPrograms/measured.ts",
     "infra/childPrograms/gitTemplates.ts",
@@ -208,6 +221,7 @@ export async function prepareChildPrograms(
     "infra/kernelPrograms/git/provenance.json",
     "src/computer/ChildProgramSet.ts",
     "src/computer/ChildProgramCatalog.ts",
+    "src/computer/ChildProgramCodes.ts",
     "src/computer/catalog/BusyboxPrograms.ts",
     "src/computer/catalog/ChildProgramFactory.ts",
     "src/computer/catalog/JqProgram.ts",
@@ -241,29 +255,7 @@ export async function prepareChildPrograms(
     sed: busyboxGraph.code,
     jq: measured.graphs.coreutils.code,
     ugrep: busyboxGraph.code,
-    codeMode: codeMode.code,
-  });
-  const inventory: ChildProgramSourceInventory = Object.freeze({
-    format: "signalbox-child-programs-v1",
-    sources: Object.freeze([...sources.values()].sort(byPath)),
-    artifacts: Object.freeze([...artifacts.values()].sort(byPath)),
-    programs: Object.freeze({
-      bash: programInventory(bashGraph),
-      busyboxCat: programInventory(busyboxGraph),
-      busyboxApplets: programInventory(busyboxGraph),
-      productBusyboxApplets: programInventory(busyboxGraph),
-      ripgrep: programInventory(ripgrepGraph),
-      coreutils: programInventory(measured.graphs.coreutils),
-      git: programInventory(measured.graphs.git),
-      sed: programInventory(busyboxGraph),
-      jq: programInventory(measured.graphs.coreutils),
-      ugrep: programInventory(busyboxGraph),
-      codeMode: {
-        entrypoint: "default",
-        mainModule: codeMode.code.mainModule,
-        modules: Object.keys(codeMode.code.modules).sort(),
-      },
-    }),
+    codeMode: codeModeProgram,
   });
   const canonicalFiles = [
     executableFile("/bin/bash", bashArtifact),
@@ -293,6 +285,36 @@ export async function prepareChildPrograms(
     }),
     { ...codeMode.executable, mode: 0o755 as const },
   ]);
+  const declaredArtifacts = new Set(
+    [...artifacts.values()].map((file) => `${file.bytes}:${file.sha256}`),
+  );
+  for (const file of commandExecutableFiles) {
+    const key = `${file.bytes.byteLength}:${file.sha256}`;
+    if (declaredArtifacts.has(key)) continue;
+    declaredArtifacts.add(key);
+    artifacts.set(file.path, {
+      path: file.path,
+      bytes: file.bytes.byteLength,
+      sha256: file.sha256,
+    });
+  }
+  const inventory: ChildProgramSourceInventory = Object.freeze({
+    format: "signalbox-child-programs-v1",
+    sources: Object.freeze([...sources.values()].sort(byPath)),
+    artifacts: Object.freeze([...artifacts.values()].sort(byPath)),
+    programs: Object.freeze(
+      Object.fromEntries(
+        preparedProgramEntries(programs).map(([name, code]) => [
+          name,
+          {
+            entrypoint: code.entrypoint!,
+            mainModule: code.mainModule,
+            modules: Object.keys(code.modules).sort(),
+          },
+        ]),
+      ),
+    ),
+  });
   const commandExecutableCatalog = createChildProgramExecutableCatalog(commandExecutableFiles);
   const executableFiles = Object.freeze(
     commandExecutableFiles.filter(
@@ -350,4 +372,8 @@ function executableFile(
   readonly path: Exclude<ChildProgramExecutablePath, typeof CODE_MODE_HOST_EXECUTABLE>;
 } {
   return Object.freeze({ path, ...artifact, mode: 0o755 });
+}
+
+function digest(bytes: Uint8Array) {
+  return NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 }

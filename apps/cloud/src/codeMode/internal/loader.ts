@@ -6,6 +6,7 @@ import type {
   CodeModeCellInvocation,
   CodeModeCellLoaderPort,
   Json,
+  CodeModeWorkerEvents,
 } from "../Types.ts";
 
 export interface CodeModeWorkerPolicy {
@@ -13,11 +14,16 @@ export interface CodeModeWorkerPolicy {
   readonly cpuMs: number;
 }
 
-class CellEvents extends RpcTarget implements CodeModeCellEvents {
+class CellEvents extends RpcTarget implements CodeModeWorkerEvents {
   readonly #events: CodeModeCellEvents;
-  constructor(events: CodeModeCellEvents) {
+  stoppedRequested = false;
+  callbacksClosed = false;
+  readonly #deferStopped: boolean;
+  abortRequested: { error: string | null } | undefined;
+  constructor(events: CodeModeCellEvents, deferStopped = false) {
     super();
     this.#events = events;
+    this.#deferStopped = deferStopped;
   }
   emit(event: Parameters<CodeModeCellEvents["emit"]>[0]) {
     return this.#events.emit(event);
@@ -32,10 +38,17 @@ class CellEvents extends RpcTarget implements CodeModeCellEvents {
     return this.#events.cancelled();
   }
   closeCallbacks() {
+    this.callbacksClosed = true;
     return this.#events.closeCallbacks();
   }
   stopped() {
-    return this.#events.stopped();
+    if (!this.#deferStopped) return this.#events.stopped();
+    this.stoppedRequested = true;
+    return Promise.resolve();
+  }
+  aborting(error: string | null) {
+    this.abortRequested = { error };
+    return Promise.resolve();
   }
 }
 
@@ -60,27 +73,80 @@ export function createCodeModeWorkerLoader(options: {
         )
           throw new Error("CodeMode bootstrap must reserve the cell evaluation modules");
       } catch (error) {
-        await events.closeCallbacks();
-        await events.stopped();
+        try {
+          await events.closeCallbacks();
+        } finally {
+          await events.stopped();
+        }
         throw error;
       }
-      const worker = options.loader.get(null, () => ({
-        compatibilityDate: "2026-10-19",
-        // Legacy module loading rejects top-level awaits before their request-owned effects finish.
-        compatibilityFlags: ["new_module_registry"],
-        // The cell gets a bare V8-like environment, without Node compatibility or network access.
-        globalOutbound: null,
-        limits: { cpuMs },
-        mainModule: input.code.mainModule,
-        modules: {
-          ...input.code.modules,
-          "cell.js": { js: input.request.source },
-          // Importing the guest namespace directly would assimilate an exported then function.
-          "__code_mode_evaluation.js": { js: 'import "./cell.js";\n' },
-        },
-      }));
-      const entrypoint = worker.getEntrypoint() as unknown as CellEntrypoint;
-      return entrypoint.run(input, new CellEvents(events));
+      let worker: WorkerStub | undefined;
+      let entrypoint: CellEntrypoint | undefined;
+      const bridge = new CellEvents(events, true);
+      let started = false;
+      let completion: CodeModeCellCompletion | undefined;
+      let failure: { cause: unknown } | undefined;
+      const disposalFailures: unknown[] = [];
+      try {
+        worker = options.loader.get(null, () => ({
+          compatibilityDate: "2026-10-19",
+          // Legacy module loading rejects top-level awaits before their request-owned effects finish.
+          compatibilityFlags: ["new_module_registry"],
+          // The cell gets a bare V8-like environment, without Node compatibility or network access.
+          globalOutbound: null,
+          limits: { cpuMs },
+          mainModule: input.code.mainModule,
+          modules: {
+            ...input.code.modules,
+            "cell.js": { js: input.request.source },
+            // Importing the guest namespace directly would assimilate an exported then function.
+            "__code_mode_evaluation.js": { js: 'import "./cell.js";\n' },
+          },
+        }));
+        entrypoint = worker.getEntrypoint() as unknown as CellEntrypoint;
+        started = true;
+        try {
+          completion = await entrypoint.run(input, bridge);
+        } catch (cause) {
+          if (bridge.abortRequested === undefined) throw cause;
+          if (bridge.abortRequested.error !== null)
+            throw new Error(bridge.abortRequested.error, { cause });
+          completion = { terminated: true, error: null, writes: {} };
+        }
+      } catch (cause) {
+        failure = { cause };
+      } finally {
+        // Releasing handles is insufficient to stop suspended ESM; aborting acknowledges only
+        // after abortIsolate has rejected the child RPC and torn down its I/O context.
+        for (const stub of [entrypoint, worker]) {
+          if (stub === undefined) continue;
+          try {
+            const dispose = Reflect.get(stub, Symbol.dispose);
+            if (typeof dispose === "function") dispose.call(stub);
+          } catch (cause) {
+            disposalFailures.push(cause);
+          }
+        }
+        try {
+          if (!started || bridge.stoppedRequested || bridge.abortRequested !== undefined) {
+            try {
+              if (!bridge.callbacksClosed) await events.closeCallbacks();
+            } finally {
+              await events.stopped();
+            }
+          }
+        } catch (cause) {
+          disposalFailures.push(cause);
+        }
+      }
+      if (disposalFailures.length) {
+        if (failure !== undefined) disposalFailures.unshift(failure.cause);
+        throw new AggregateError(disposalFailures, "CodeMode worker disposal failed");
+      }
+      if (failure !== undefined) throw failure.cause;
+      if (completion === undefined)
+        throw new Error("CodeMode worker returned without a completion");
+      return completion;
     },
   };
 }

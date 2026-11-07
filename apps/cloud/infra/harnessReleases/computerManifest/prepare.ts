@@ -1,3 +1,5 @@
+import { preparedProgramEntries } from "../../childPrograms/programEntries.ts";
+import { CODE_MODE_HOST_EXECUTABLE } from "../../../src/computer/CodeModeManifest.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as esbuild from "esbuild";
@@ -92,37 +94,40 @@ function describePreparedCommands(
     throw new Error("TRUSTED_COMPUTER_COMMAND_CATALOG_DRIFT");
 
   const seeded = createSeededCommandProgramCodes(prepared.programs);
-  const programDescriptors: Record<string, unknown> = {
-    bash: describeProgram(seeded.bash, prepared.programs.bash, executableFiles),
-    busyboxCat: describeProgram(seeded.busyboxCat, prepared.programs.busyboxCat, executableFiles),
-    busyboxApplets: describeProgram(
-      seeded.busyboxApplets,
-      prepared.programs.busyboxApplets,
-      executableFiles,
-    ),
-    productBusyboxApplets: describeProgram(
-      seeded.productBusyboxApplets,
-      prepared.programs.productBusyboxApplets,
-      executableFiles,
-    ),
-    ripgrep: describeProgram(seeded.ripgrep, prepared.programs.ripgrep, executableFiles),
-    git: describeProgram(seeded.git, prepared.programs.git, executableFiles),
-    sed: describeProgram(seeded.sed, prepared.programs.sed, executableFiles),
-    jq: describeProgram(seeded.jq, prepared.programs.jq, executableFiles),
-    ugrep: describeProgram(seeded.ugrep, prepared.programs.ugrep, executableFiles),
-    coreutils: Object.fromEntries(
-      Object.entries(seeded.coreutils)
-        .sort(([left], [right]) => compareText(left, right))
-        .map(([command, code]) => [
-          command,
-          describeProgram(
-            code,
-            prepared.programs.coreutils[command as keyof typeof prepared.programs.coreutils],
-            executableFiles,
+  const programDescriptors = Object.fromEntries(
+    preparedProgramEntries(prepared.programs).map(([name, source]) => {
+      if (name === "coreutils")
+        return [
+          name,
+          Object.fromEntries(
+            Object.entries(seeded.coreutils).map(([command, code]) => [
+              command,
+              describeProgram(
+                code,
+                prepared.programs.coreutils[command as keyof typeof prepared.programs.coreutils],
+                executableFiles,
+              ),
+            ]),
           ),
-        ]),
-    ),
-  };
+        ];
+      if (name === "codeMode") {
+        const artifact = executableFiles.find((file) => file.path === CODE_MODE_HOST_EXECUTABLE);
+        if (artifact === undefined) throw new Error("TRUSTED_COMPUTER_PROGRAM_PIN_INVALID");
+        return [
+          name,
+          describeProgram({ ...source, executableArtifact: artifact }, source, executableFiles),
+        ];
+      }
+      return [
+        name,
+        describeProgram(
+          seeded[name as Exclude<keyof typeof seeded, "coreutils" | "codeMode">],
+          source,
+          executableFiles,
+        ),
+      ];
+    }),
+  );
 
   const assetKeys = new Set(
     [...executableFiles, ...dataFiles].map((file) => `${file.bytes}:${file.sha256}`),

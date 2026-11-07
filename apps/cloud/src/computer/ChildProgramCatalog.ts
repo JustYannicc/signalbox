@@ -31,6 +31,7 @@ export interface ChildProgramCatalogOptions {
   readonly filesystem: KernelFileSystem;
   readonly loader: WorkerLoader | ChildWorkerLoaderPort;
   readonly capacity: Pick<ChildWorkerCapacity, "run">;
+  readonly physicalCapacity?: Pick<ChildWorkerCapacity, "acquire"> | undefined;
   readonly programs: ChildProgramCodes;
   readonly codeModeHost?: ComputerCodeModeHost;
   readonly hostname: string;
@@ -53,6 +54,7 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
       executable: entry.implementation,
       code: entry.code,
       capacity: options.capacity,
+      physicalCapacity: options.physicalCapacity,
       lifetimes,
       ...(options.reservationFor === undefined
         ? {}

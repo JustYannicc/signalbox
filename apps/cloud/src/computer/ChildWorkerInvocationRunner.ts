@@ -44,6 +44,7 @@ export function createChildWorkerInvocationRunner<Host extends object>(options: 
   readonly executable: string;
   readonly code: ChildWorkerCode;
   readonly capacity: Pick<ChildWorkerCapacity, "run">;
+  readonly physicalCapacity?: Pick<ChildWorkerCapacity, "acquire"> | undefined;
   readonly lifetimes?: ChildWorkerLifetimes;
   readonly dispatch: ChildWorkerDispatch<Host>;
 }) {
@@ -93,7 +94,10 @@ export function createChildWorkerInvocationRunner<Host extends object>(options: 
           if (owner.exited !== undefined) void owner.exited.then(settle.resolve, settle.reject);
           let failure: ChildWorkerDispatchError | undefined;
           let dispatched = false;
+          let physical: Awaited<ReturnType<ChildWorkerCapacity["acquire"]>> | undefined;
           try {
+            input.signal.throwIfAborted();
+            physical = await options.physicalCapacity?.acquire(input.signal, undefined);
             input.signal.throwIfAborted();
             dispatched = true;
             return copyKernelRpcRecord(
@@ -137,7 +141,11 @@ export function createChildWorkerInvocationRunner<Host extends object>(options: 
                   // Capability cleanup cannot acknowledge a worker whose transport disappeared.
                   await failure.termination.stopped;
                 }
-                await owner.onStopped?.();
+                try {
+                  await owner.onStopped?.();
+                } finally {
+                  await physical?.release();
+                }
               }
             }
           }

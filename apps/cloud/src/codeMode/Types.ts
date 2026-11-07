@@ -108,3 +108,8 @@ export const messageError = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 export const ok = <T>(value: T): WireResult<T> => ({ status: "ok", value });
 export const fail = (message: string): WireResult<never> => ({ status: "error", message });
+
+/** Only the trusted cell wrapper can request isolate termination. */
+export interface CodeModeWorkerEvents extends CodeModeCellEvents {
+  readonly aborting: (error: string | null) => Promise<void>;
+}

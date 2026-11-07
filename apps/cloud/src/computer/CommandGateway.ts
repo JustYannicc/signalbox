@@ -55,6 +55,7 @@ export interface CommandGatewayOptions {
    * (see apps/cloud/src/computer/README.md).
    */
   readonly capacity: Pick<ChildWorkerCapacity, "enqueue" | "run" | "reserve">;
+  readonly physicalCapacity?: Pick<ChildWorkerCapacity, "acquire"> | undefined;
   readonly loader: ChildProgramCatalogOptions["loader"];
   readonly programs: CommandProgramCodes;
   readonly codeModeHost?: ChildProgramCatalogOptions["codeModeHost"];
@@ -100,6 +101,7 @@ export function createCommandGateway(options: CommandGatewayOptions) {
       filesystem: options.filesystem,
       loader: options.loader,
       capacity: options.capacity,
+      physicalCapacity: options.physicalCapacity,
       programs: options.programs,
       hostname: options.systemIdentity?.hostname ?? options.hostname,
       lifetimes,
