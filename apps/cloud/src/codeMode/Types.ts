@@ -40,6 +40,8 @@ export interface CodeModeCellCompletion {
 }
 
 export interface CodeModeCellEvents {
+  /** Acknowledge worker entry after acquisition and before guest execution. */
+  readonly started: () => Promise<void>;
   readonly emit: (
     event: { type: "content"; item: CodeModeContent } | { type: "yield" },
   ) => Promise<void>;

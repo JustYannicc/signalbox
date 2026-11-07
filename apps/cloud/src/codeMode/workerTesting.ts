@@ -111,6 +111,10 @@ export function vmWorkerLoader(
                 };
               };
               const observedEvents: CodeModeWorkerEvents = {
+                started: () => {
+                  recordIo("started");
+                  return events.started();
+                },
                 aborting: (error) => (events as CodeModeWorkerEvents).aborting(error),
                 emit: (event) => {
                   recordIo("emit");

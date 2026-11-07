@@ -45,6 +45,7 @@ describe("CodeMode handler I/O through the public loader", () => {
     const cancelled = Promise.withResolvers<void>();
     const output: string[] = [];
     const events: CodeModeCellEvents = {
+      started: async () => {},
       emit: vi.fn(async (event) => {
         const value =
           event.type === "yield"
@@ -149,6 +150,7 @@ text("guest done");
     const invoked = Promise.withResolvers<void>();
     const cancelled = Promise.withResolvers<void>();
     const events: CodeModeCellEvents = {
+      started: async () => {},
       emit: vi.fn(async () => undefined),
       invoke: vi.fn(() => {
         invoked.resolve();
@@ -187,6 +189,7 @@ text("discarded"); notify("discarded"); setTimeout(() => text("discarded"), 0);
     const workers = vmWorkerLoader();
     const emitted: string[] = [];
     const events: CodeModeCellEvents = {
+      started: async () => {},
       emit: async (event) => {
         if (event.type === "content" && event.item.type === "input_text")
           emitted.push(event.item.text);

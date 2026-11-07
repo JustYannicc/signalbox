@@ -1,4 +1,5 @@
 import type { CodeModeCellCapacity } from "../Capacity.ts";
+import type { CodeModeLifecycleObserver } from "../Lifecycle.ts";
 import { CodeModeCell, type CellObservation } from "./cell.ts";
 import type { CodeModeDelegates } from "./delegates.ts";
 import type {
@@ -15,6 +16,7 @@ interface SessionOptions {
   loader: CodeModeCellLoaderPort;
   code: CodeModeCellCode;
   cellCapacity: Pick<CodeModeCellCapacity, "acquire">;
+  onLifecycle?: CodeModeLifecycleObserver | undefined;
   delegates: CodeModeDelegates;
   send: (message: unknown) => void;
 }
@@ -52,6 +54,7 @@ export class CodeModeSession {
       admissionController: admission,
       cellCapacity: this.#options.cellCapacity,
       admissionSettled: detach,
+      onLifecycle: this.#options.onLifecycle,
       delegates: this.#options.delegates,
       commit: (writes) => {
         for (const [key, value] of Object.entries(writes)) this.#values.set(key, value);

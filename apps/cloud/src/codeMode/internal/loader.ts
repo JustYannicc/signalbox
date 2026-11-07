@@ -25,6 +25,9 @@ class CellEvents extends RpcTarget implements CodeModeWorkerEvents {
     this.#events = events;
     this.#deferStopped = deferStopped;
   }
+  started() {
+    return this.#events.started();
+  }
   emit(event: Parameters<CodeModeCellEvents["emit"]>[0]) {
     return this.#events.emit(event);
   }

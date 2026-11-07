@@ -15,6 +15,12 @@ export default class CodeModeCellWorker extends WorkerEntrypoint {
     events: CodeModeWorkerEvents,
   ): Promise<CodeModeCellCompletion> {
     const effects = captureCodeModeEffects();
+    try {
+      await events.started();
+    } catch (error) {
+      await events.stopped();
+      throw error;
+    }
     const runtime = installCodeModeGlobals(input);
     const pump = new CodeModePump(runtime, events, effects);
     restrictCodeModeGlobals();

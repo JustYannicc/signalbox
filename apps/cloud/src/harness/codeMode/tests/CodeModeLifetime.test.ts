@@ -45,6 +45,7 @@ describe("CodeMode cell ownership", () => {
       const invoked = Promise.withResolvers<void>();
       const cancelled = Promise.withResolvers<void>();
       const events: CodeModeCellEvents = {
+        started: async () => {},
         emit: async () => undefined,
         invoke: () => {
           invoked.resolve();
@@ -201,6 +202,7 @@ describe("CodeMode cell ownership", () => {
       createCodeModeWorkerLoader({ loader: worker.loader, policy: { cpuMs: 0 } }),
     ).toThrow("cpuMs");
     const events: CodeModeCellEvents = {
+      started: async () => {},
       emit: async () => undefined,
       invoke: async () => null,
       notify: async () => undefined,
@@ -221,6 +223,7 @@ describe("CodeMode cell ownership", () => {
     const loader = createCodeModeWorkerLoader({ loader: worker.loader, policy: { cpuMs: 10 } });
     const order: string[] = [];
     const events: CodeModeCellEvents = {
+      started: async () => {},
       emit: async () => undefined,
       invoke: async () => null,
       notify: async () => undefined,
@@ -274,6 +277,7 @@ describe("CodeMode cell ownership", () => {
     const failure = new Error("cell handle disposal failed");
     const workerDisposed = vi.fn();
     const events: CodeModeCellEvents = {
+      started: async () => {},
       emit: async () => undefined,
       invoke: async () => null,
       notify: async () => undefined,

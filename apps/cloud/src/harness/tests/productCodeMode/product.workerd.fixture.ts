@@ -21,6 +21,7 @@ import { CODE_MODE_HOST_EXECUTABLE } from "../../CodeModeHost.ts";
 import type { KernelCommand } from "../../../kernel/KernelCommandForwarder.ts";
 import { appServerDriver } from "./driver.ts";
 import { codeModeResponses } from "./model.ts";
+import type { CodeModeLifecycleEvent } from "../../../codeMode/Lifecycle.ts";
 
 interface Env {
   readonly LOADER: WorkerLoader;
@@ -57,6 +58,7 @@ export class Host extends DurableObject<Env> {
     });
     const machineCalls: string[] = [];
     const cellTools: unknown[] = [];
+    const lifecycle: CodeModeLifecycleEvent[] = [];
     const loader = createAssetChildWorkerLoader(
       this.env.LOADER,
       async (hash) => asset(hash).buffer,
@@ -80,6 +82,7 @@ export class Host extends DurableObject<Env> {
       signal: controller.signal,
       capacity,
       loader: observedLoader,
+      onCodeModeLifecycle: (event) => lifecycle.push(event),
       programs: createSeededCommandProgramCodes(this.env.SOURCES),
       machineInventory: machineInventoryFixture(),
       machine: () => ({
@@ -216,6 +219,7 @@ export class Host extends DurableObject<Env> {
         execCalls,
         machineCalls,
         cellTools,
+        lifecycle,
         execWire,
         modelRequests: model.requests,
         frames: driver.frames,
