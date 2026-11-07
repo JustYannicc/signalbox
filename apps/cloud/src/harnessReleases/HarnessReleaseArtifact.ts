@@ -58,7 +58,8 @@ export type HarnessReleaseArtifactRawManifests = DeepReadonly<{
 export interface OpenedHarnessReleaseArtifact {
   readonly manifest: DeepReadonly<HarnessReleaseArtifactManifest>;
   readonly rawManifests: HarnessReleaseArtifactRawManifests;
-  readonly read: (path: string) => Promise<Uint8Array>;
+  /** An aborted `signal` stops a multi-range read before its next range. */
+  readonly read: (path: string, signal?: AbortSignal) => Promise<Uint8Array>;
 }
 
 const readVerifiedFile = async (
@@ -70,11 +71,19 @@ const readVerifiedFile = async (
     readonly size: HarnessReleaseArtifactErrorCode;
     readonly hash: HarnessReleaseArtifactErrorCode;
   },
+  signal?: AbortSignal,
 ) => {
   const bytes: Uint8Array<ArrayBuffer> =
     source.readRange === undefined
       ? (copyBytes(await source.read(artifactRef, path)) as Uint8Array<ArrayBuffer>)
-      : await readArtifactFileInRanges(source, artifactRef, path, expected.bytes, errors.size);
+      : await readArtifactFileInRanges(
+          source,
+          artifactRef,
+          path,
+          expected.bytes,
+          errors.size,
+          signal,
+        );
   if (bytes.byteLength !== expected.bytes) failArtifact(errors.size);
   if ((await sha256Hex(bytes)) !== expected.sha256) failArtifact(errors.hash);
   return bytes;
@@ -88,9 +97,11 @@ const readArtifactFileInRanges = async (
   path: string,
   bytes: number,
   sizeError: HarnessReleaseArtifactErrorCode,
+  signal?: AbortSignal,
 ): Promise<Uint8Array<ArrayBuffer>> => {
   const output = new Uint8Array(bytes);
   for (let offset = 0; offset < bytes; offset += HARNESS_RELEASE_ARTIFACT_RANGE_BYTES) {
+    signal?.throwIfAborted();
     const length = Math.min(HARNESS_RELEASE_ARTIFACT_RANGE_BYTES, bytes - offset);
     const chunk = await source.readRange!(artifactRef, path, offset, length);
     if (
@@ -163,17 +174,21 @@ export const openHarnessReleaseArtifact = async (
   }
 
   const verifiedReads = new Map<string, Promise<Uint8Array>>();
-  const read = async (path: string): Promise<Uint8Array> => {
+  const read = async (path: string, signal?: AbortSignal): Promise<Uint8Array> => {
     const descriptor = inventory.get(path);
     if (!descriptor) return failArtifact("FILE_NOT_DECLARED");
 
     let verified = verifiedReads.get(path);
     const shared = verified !== undefined;
     if (!verified) {
-      verified = readVerifiedFile(source, identity.artifactRef, path, descriptor, {
-        size: "FILE_SIZE_MISMATCH",
-        hash: "FILE_HASH_MISMATCH",
-      });
+      verified = readVerifiedFile(
+        source,
+        identity.artifactRef,
+        path,
+        descriptor,
+        { size: "FILE_SIZE_MISMATCH", hash: "FILE_HASH_MISMATCH" },
+        signal,
+      );
       verifiedReads.set(path, verified);
     }
 
