@@ -100,10 +100,14 @@ export function createProductComputer(options: ProductComputerOptions) {
         : (() => {
             if (loader.cells === undefined)
               throw new TypeError("Product Computer requires a CodeMode cell loader");
-            const cells = new ChildWorkerCapacity(options.capacity.limit, {
-              owner: `${options.capacity.owner}/code-mode`,
-              RESIDENT_BYTE_LIMIT: String(options.capacity.residentByteLimit),
-            });
+            // Cells may await commands, so they must never consume the final command permit.
+            const cells = new ChildWorkerCapacity(
+              Math.min(options.capacity.limit, physicalCapacity.limit - 1),
+              {
+                owner: `${options.capacity.owner}/code-mode`,
+                RESIDENT_BYTE_LIMIT: String(options.capacity.residentByteLimit),
+              },
+            );
             return createCodeModeHostProgram({
               loader: loader.cells,
               capacity: {
