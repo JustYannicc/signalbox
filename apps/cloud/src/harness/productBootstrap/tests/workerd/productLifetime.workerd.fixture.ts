@@ -46,10 +46,18 @@ export class ProductLifetime extends DurableObject<{ readonly PRODUCT_SDK_SOURCE
                 ...original,
                 commands: {
                   ...original.commands,
-                  machine: (identity) => ({
-                    ...original.commands.machine(identity),
-                    files: productMachineFiles(original.machineInventory),
-                  }),
+                  machine: (identity) => {
+                    const machine = original.commands.machine(identity);
+                    const files = productMachineFiles(original.machineInventory);
+                    return {
+                      ...machine,
+                      files,
+                      async spawn(command, signal) {
+                        await files.markExecuted(files.current().generation!);
+                        return machine.spawn(command, signal);
+                      },
+                    };
+                  },
                 },
                 save: async (value) => {
                   saves++;

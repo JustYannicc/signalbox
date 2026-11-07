@@ -183,6 +183,7 @@ export async function machinePathDockerFixture(input: {
   const activeChildren = new Set<NodeChildProcess.ChildProcessWithoutNullStreams>();
   const spawn: KernelCommandForwarder["spawn"] = async (command, signal) => {
     signal.throwIfAborted();
+    await files.markExecuted(generation);
     const args = ["exec", "-i", "--workdir", command.cwd];
     for (const [key, value] of Object.entries(command.env)) args.push("--env", `${key}=${value}`);
     args.push(containerId, command.executable, ...command.argv.slice(1));

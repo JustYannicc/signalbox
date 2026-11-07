@@ -96,7 +96,7 @@ describe.skipIf(programs === undefined)("ProductComputer forwarding rejection", 
       const continuation = result.stdout.match(/^continued:(\d+)\n$/);
       expect(continuation).not.toBeNull();
       expect(Number(continuation?.[1])).toBe(result.status.exitCode);
-      expect(result.stderr).toBe("signalbox: machine unavailable (RUNNER_NOT_READY)\n");
+      expect(result.stderr).toBe("signalbox: No machine is attached (RUNNER_NOT_READY)\n");
       expect(result.stderr.length).toBeLessThanOrEqual(256);
       expect(spawn).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
