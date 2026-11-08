@@ -21,7 +21,16 @@ const digest = (value: Uint8Array) => NodeCrypto.createHash("sha256").update(val
 const MANIFEST_SHA256 = CODEX_WASI_RELEASE.files["manifest.json"].sha256;
 const ENGINE_SHA256 = CODEX_WASI_RELEASE.files["engine.wasm"].sha256;
 
-async function runProof(route: "run" | "fresh-default" | "fresh-openai" | "fresh-dotted") {
+async function runProof(
+  route:
+    | "run"
+    | "fresh-default"
+    | "fresh-openai"
+    | "fresh-dotted"
+    | "fresh-flat"
+    | "auth-default"
+    | "auth-openai",
+) {
   if (!releaseDir || !programDir)
     throw new Error(
       "Pinned CodeMode product inputs are required: SIGNALBOX_CODE_MODE_RELEASE_DIR and SIGNALBOX_CODE_MODE_PROGRAM_DIR. See native/codex-wasm/README.md.",
@@ -188,7 +197,7 @@ describe("official Codex CodeMode through ProductComputer", () => {
       ).toEqual(lifecycle);
     }
   }, 120_000);
-  it.each(["fresh-default", "fresh-openai", "fresh-dotted"] as const)(
+  it.each(["fresh-default", "fresh-openai", "fresh-dotted", "fresh-flat"] as const)(
     "starts %s without a model prewarm request",
     async (route) => {
       const body = await runProof(route);
@@ -202,7 +211,12 @@ describe("official Codex CodeMode through ProductComputer", () => {
         .trim()
         .split("\n")
         .map((line: string) => JSON.parse(line));
-      const provider = route === "fresh-dotted" ? "fixture.dot" : "signalbox-gateway";
+      const provider =
+        route === "fresh-dotted"
+          ? "fixture.dot"
+          : route === "fresh-flat"
+            ? "fixture"
+            : "signalbox-gateway";
       expect(frames[0].overrides).toMatchObject({
         model_provider: provider,
         model_providers: {
@@ -215,6 +229,30 @@ describe("official Codex CodeMode through ProductComputer", () => {
       expect(frames).toContainEqual(expect.objectContaining({ method: "thread/start" }));
       expect(frames).not.toContainEqual(expect.objectContaining({ method: "turn/start" }));
       expect(body.result.stderr.join("")).not.toMatch(/panicked|unreachable|WouldBlock/);
+    },
+    120_000,
+  );
+  it.each(["auth-default", "auth-openai"] as const)(
+    "preserves auth.json authentication and scrubbing through two %s SSE turns",
+    async (route) => {
+      const body = await runProof(route);
+      expect(body).toMatchObject({
+        active: 0,
+        processes: 0,
+        result: { completions: ["completed", "completed"] },
+      });
+      const auth = body.result.authentication;
+      expect(auth.arrivals).toHaveLength(2);
+      expect(auth.arrivals).toEqual([
+        { authenticated: true, status: 200 },
+        { authenticated: true, status: 200 },
+      ]);
+      expect(auth.requests).toHaveLength(2);
+      for (const request of auth.requests) {
+        expect(request.body).toContain(auth.placeholder);
+        expect(request.body).not.toContain(auth.secret);
+        expect(request.authorization).toBeNull();
+      }
     },
     120_000,
   );

@@ -1,4 +1,11 @@
-import { CodexSettings, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import {
+  CodexSettings,
+  ProviderDriverKind,
+  ThreadId,
+  RunId,
+  RunAttemptId,
+  MessageId,
+} from "@t3tools/contracts";
 import { CODEX_DEFAULT_INSTANCE_ID } from "@signalbox/provider-codex/defaults";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -9,12 +16,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as Option from "effect/Option";
 import { makeCodexIsolateAdapter } from "../../CodexIsolateAdapter.ts";
 import type { CodexHarnessProcessOptions } from "../../CodexHarnessProcess.ts";
 import { dataForDriver } from "../../adapter/tests/data.ts";
 
 const decodeSettings = Schema.decodeEffect(CodexSettings);
-export async function freshThread(process: CodexHarnessProcessOptions) {
+export async function freshThread(process: CodexHarnessProcessOptions, secret?: string) {
   const stderr: string[] = [];
   const input: string[] = [];
   const decoder = new TextDecoder();
@@ -74,7 +83,44 @@ export async function freshThread(process: CodexHarnessProcessOptions) {
           ...session,
           existingProviderThread: providerThread,
         });
+        const completions: string[] = [];
+        if (secret !== undefined) {
+          for (const ordinal of [1, 2]) {
+            yield* runtime.startTurn({
+              rootNodeId: data.turn.rootNodeId,
+              threadId: session.threadId,
+              providerThread: thread,
+              runtimePolicy: session.runtimePolicy,
+              runId: RunId.make(`auth-${ordinal}`),
+              attemptId: RunAttemptId.make(`auth-${ordinal}`),
+              runOrdinal: ordinal,
+              providerTurnOrdinal: ordinal,
+              modelSelection: session.modelSelection,
+              appThread: {
+                ...data.turn.appThread,
+                id: session.threadId,
+                providerInstanceId: session.modelSelection.instanceId,
+                modelSelection: session.modelSelection,
+                activeProviderThreadId: thread.id,
+                lineage: { ...data.turn.appThread.lineage, rootThreadId: session.threadId },
+              },
+              message: {
+                ...data.turn.message,
+                messageId: MessageId.make(`auth-${ordinal}`),
+                text: `Remember this key: ${secret}`,
+              },
+            });
+            const completed = yield* runtime.events.pipe(
+              Stream.filter((event) => event.type === "turn.terminal"),
+              Stream.runHead,
+            );
+            const status = Option.isSome(completed) ? completed.value.status : "missing";
+            completions.push(status);
+            if (status !== "completed") break;
+          }
+        }
         return {
+          completions,
           input: input.join(""),
           nativeId: thread.nativeThreadRef?.nativeId,
           stderr,

@@ -24,6 +24,8 @@ import { CODE_MODE_HOST_EXECUTABLE } from "../../CodeModeHost.ts";
 import type { KernelCommand } from "../../../kernel/KernelCommandForwarder.ts";
 import { appServerDriver } from "./driver.ts";
 import { codeModeResponses } from "./model.ts";
+import { authenticatedGateway } from "./authenticated.ts";
+import { createNodeFs } from "../../../isolate/NodeFs.ts";
 import { freshThread } from "./fresh.ts";
 import type { CodeModeLifecycleEvent } from "../../../codeMode/Lifecycle.ts";
 
@@ -36,7 +38,7 @@ interface Env {
 }
 
 export class Host extends DurableObject<Env> {
-  async run(provider?: "default" | "openai" | "dotted") {
+  async run(provider?: "default" | "openai" | "dotted" | "flat" | "auth-default" | "auth-openai") {
     const fresh = provider !== undefined;
     const wakes = new KernelWakeRegistry();
     const controller = new AbortController();
@@ -156,6 +158,18 @@ export class Host extends DurableObject<Env> {
         });
       }
     });
+    const auth =
+      provider === "auth-default" || provider === "auth-openai"
+        ? await authenticatedGateway()
+        : undefined;
+    if (auth !== undefined) {
+      const fs = createNodeFs(files).fs;
+      fs.mkdirSync("/home/codex/.codex", { recursive: true });
+      fs.writeFileSync(
+        "/home/codex/.codex/auth.json",
+        JSON.stringify({ OPENAI_API_KEY: auth.token }),
+      );
+    }
     let driver: ReturnType<typeof appServerDriver> | undefined;
     let result: unknown;
     try {
@@ -183,7 +197,7 @@ export class Host extends DurableObject<Env> {
           PATH: "/bin:/usr/bin",
           SHELL: "/bin/bash",
           CODEX_EXEC_SERVER_URL: "ws://localhost/exec",
-          OPENAI_API_KEY: "fixture-only",
+          ...(auth === undefined ? { OPENAI_API_KEY: "fixture-only" } : {}),
         },
         bootstrap: {
           type: "bootstrap",
@@ -195,9 +209,10 @@ export class Host extends DurableObject<Env> {
             "analytics.enabled": false,
             "feedback.enabled": false,
             model: "gpt-5.5",
-            ...(provider === "default"
+            cli_auth_credentials_store: "file",
+            ...(provider === "default" || provider === "auth-default"
               ? {}
-              : provider === "openai"
+              : provider === "openai" || provider === "auth-openai"
                 ? { model_provider: "openai" }
                 : {
                     model_provider: provider === "dotted" ? "fixture.dot" : "fixture",
@@ -213,6 +228,7 @@ export class Host extends DurableObject<Env> {
                       },
                     },
                   }),
+            ...(provider === "flat" ? { "model_providers.fixture.supports_websockets": true } : {}),
             "features.respect_system_proxy": true,
             "features.shell_snapshot": false,
             "features.unified_exec": true,
@@ -238,14 +254,23 @@ export class Host extends DurableObject<Env> {
           });
           if (request.headers.has("upgrade"))
             return Promise.resolve(new Response(null, { status: 426 }));
-          return model.fetch(request);
+          return auth === undefined ? model.fetch(request) : auth.fetch(request);
         },
         lifetime: this.ctx,
         signal: controller.signal,
       } satisfies CodexHarnessProcessOptions;
       if (fresh) {
         result = {
-          ...(await freshThread(processOptions)),
+          ...(await freshThread(processOptions, auth?.secret)),
+          authentication:
+            auth === undefined
+              ? null
+              : {
+                  requests: auth.requests,
+                  arrivals: auth.arrivals,
+                  secret: auth.secret,
+                  placeholder: auth.placeholder,
+                },
           modelRequests: model.requests,
           modelHttpRequests,
         };
@@ -315,7 +340,13 @@ export default {
               ? "openai"
               : new URL(request.url).pathname === "/fresh-dotted"
                 ? "dotted"
-                : undefined,
+                : new URL(request.url).pathname === "/fresh-flat"
+                  ? "flat"
+                  : new URL(request.url).pathname === "/auth-default"
+                    ? "auth-default"
+                    : new URL(request.url).pathname === "/auth-openai"
+                      ? "auth-openai"
+                      : undefined,
         ),
       );
     } catch (error) {
