@@ -82,6 +82,7 @@ export async function handleModelRequest(
       ?.split(",")
       .some((protocol) => protocol.trim().toLowerCase() === "websocket")
   ) {
+    // Codex needs 426 to fall back to HTTP, where the turn's secrets can be scrubbed.
     return errorResponse(provider, 426, "Model WebSockets are not supported. Use HTTP instead.");
   }
   const token = bearerOrKey(request.headers);
