@@ -1,12 +1,16 @@
 export const CODE_MODE_SOURCE =
   'const r = await tools.exec_command({cmd:"mkdir -p docs/routines/evening","workdir":"/work","yield_time_ms":10000,"max_output_tokens":1000}); text(r.output);';
 
+export const SYMLINK_CODE_MODE_SOURCE =
+  'const r = await tools.exec_command({cmd:"mkdir -p docs/routines/evening; pwd -P","workdir":"/alias","yield_time_ms":10000,"max_output_tokens":1000}); text(r.output);';
+
 export const OUTPUT_SOURCE =
   'const r = await tools.exec_command({cmd:"printf code-mode-output","workdir":"/work","yield_time_ms":10000,"max_output_tokens":1000}); text(r.output);';
 
 export function codeModeResponses(
   observe?: (body: Record<string, unknown>) => void,
   toolCalls = true,
+  source = CODE_MODE_SOURCE,
 ) {
   const requests: Record<string, unknown>[] = [];
   return {
@@ -23,7 +27,7 @@ export function codeModeResponses(
               id: "item-code-mode",
               call_id: "call-code-mode",
               name: "exec",
-              input: CODE_MODE_SOURCE,
+              input: source,
             }
           : toolCalls && requests.length === 2
             ? {

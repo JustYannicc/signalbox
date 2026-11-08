@@ -56,12 +56,7 @@ export function createComputerCommands(
   });
   const capture = (command: KernelCommand, signal: AbortSignal) => {
     signal.throwIfAborted();
-    const captured = snapshotCommand(command);
-    const canonical = options.kernel.filesystem.realpath(captured.cwd);
-    if (canonical !== captured.cwd) {
-      throw new KernelForwardingUnavailable("WORKSPACE_NOT_READY", "Command cwd must be canonical");
-    }
-    return captured;
+    return snapshotCommand(command, options.kernel.filesystem);
   };
   const isolate: ComputerExecPort = Object.freeze({
     exec: (
