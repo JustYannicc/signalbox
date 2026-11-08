@@ -71,7 +71,7 @@ resume, tools, MCP and interruption belong to #1069 and the #1072 release replay
 
 The hooks packager and native ProductComputer CodeMode test share the release pin in
 [`release.ts`](../../apps/cloud/infra/codexTurn/release.ts). The public artifact comes from
-[`kernel-programs-20261108-codex-7645a1c9`](https://github.com/JustYannicc/signalbox/releases/tag/kernel-programs-20261108-codex-7645a1c9).
+[`kernel-programs-20261108-codex-6169cddc`](https://github.com/JustYannicc/signalbox/releases/tag/kernel-programs-20261108-codex-6169cddc).
 Its notes record the source, builder, toolchain and manifest hash. The downloader verifies
 the size and SHA-256 of the manifest, engine, loader and Cargo.lock.
 
