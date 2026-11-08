@@ -7,6 +7,7 @@ CLI replacement is included. Unknown source shapes require a rule edit (#1072).
 """
 
 import difflib
+import hashlib
 import json
 from pathlib import Path
 from typing import NoReturn
@@ -161,12 +162,19 @@ def apply_overlay(root: Path, target: str) -> list[dict]:
             if not path.is_file():
                 _shape(rules[0], "missing source file")
             original = path.read_text()
+            guard = next((rule for rule in rules if "source_sha256" in rule), None)
+            if guard is not None:
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                if digest not in {guard["source_sha256"], guard["patched_sha256"]}:
+                    _shape(guard, f"expected source sha256 {guard['source_sha256']}, found {digest}")
             try:
                 matches = _validate(original, rules, platform)
                 output = original
                 applied = [rule for rule, done, _, _ in matches if not done]
                 for rule in applied:
                     output = _replace(output, rule)
+                if guard is not None and hashlib.sha256(output.encode()).hexdigest() != guard["patched_sha256"]:
+                    _shape(guard, "patched source sha256 differs")
                 if not all(done for _, done, _, _ in _validate(output, rules, platform)):
                     _shape(rules[0], "overlay did not produce the expected structures")
             except ValueError as error:

@@ -4,6 +4,7 @@ interface Frame {
   readonly id?: number;
   readonly method?: string;
   readonly params?: {
+    readonly sessionId?: string;
     readonly turn?: { readonly status: string };
     readonly thread?: { readonly id: string };
   };
@@ -20,6 +21,10 @@ export function appServerDriver(process: CodexHarnessProcess) {
     ReturnType<typeof Promise.withResolvers<NonNullable<Frame["result"]>>>
   >();
   const completed = Promise.withResolvers<Frame>();
+  const waiters = new Set<{
+    readonly matches: (frame: Frame) => boolean;
+    readonly resolve: (frame: Frame) => void;
+  }>();
   let nextId = 0;
   const output = (async () => {
     const reader = process.stdout.getReader();
@@ -38,6 +43,12 @@ export function appServerDriver(process: CodexHarnessProcess) {
           if (!line.trim()) continue;
           const frame: Frame = JSON.parse(line);
           frames.push(frame);
+          for (const waiter of waiters) {
+            if (waiter.matches(frame)) {
+              waiters.delete(waiter);
+              waiter.resolve(frame);
+            }
+          }
           if (frame.id !== undefined) {
             const request = pending.get(frame.id);
             pending.delete(frame.id);
@@ -70,6 +81,11 @@ export function appServerDriver(process: CodexHarnessProcess) {
     frames,
     errors,
     completed: completed.promise,
+    waitFor(matches: (frame: Frame) => boolean) {
+      const existing = frames.find(matches);
+      if (existing !== undefined) return Promise.resolve(existing);
+      return new Promise<Frame>((resolve) => waiters.add({ matches, resolve }));
+    },
     async request(method: string, params: unknown) {
       const id = ++nextId;
       const response = Promise.withResolvers<NonNullable<Frame["result"]>>();

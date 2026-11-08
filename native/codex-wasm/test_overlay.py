@@ -215,9 +215,10 @@ class OfficialSourceTests(unittest.TestCase):
         # No CLI entrypoint, WebSocket policy, or code-mode policy is in the surface.
         self.assertFalse(any('/exec/' in item['path'] for item in changes))
 
-    def test_all_rules_accept_comment_and_whitespace_drift(self):
+    def test_unpinned_rules_accept_comment_and_whitespace_drift(self):
+        pinned = {rule["path"] for rule in self.rules if "source_sha256" in rule}
         for path in self.root.rglob('*'):
-            if path.is_file():
+            if path.is_file() and str(path.relative_to(self.root)) not in pinned:
                 toml = path.suffix == '.toml'
                 source = path.read_text()
                 tokens = tokenize(source, toml)
@@ -230,6 +231,14 @@ class OfficialSourceTests(unittest.TestCase):
         self.assertEqual(overlay.apply_overlay(self.root, TARGET), [])
         for path in self.root.rglob('Cargo.toml'):
             tomllib.loads(path.read_text())
+
+    def test_pinned_file_rejects_unanchored_walker_change(self):
+        path = self.root / 'codex-rs/file-search/src/lib.rs'
+        path.write_text(path.read_text().replace('.hidden(false)', '.hidden(true)'))
+        original = snapshot(self.root)
+        with self.assertRaisesRegex(overlay.OverlayError, 'expected source sha256.*#1072'):
+            overlay.apply_overlay(self.root, TARGET)
+        self.assertEqual(snapshot(self.root), original)
 
     def test_late_shape_failure_does_not_create_files(self):
         path = self.root / 'codex-rs/utils/path-utils/src/system_commands.rs'

@@ -6,7 +6,9 @@ checkout is hashed before and after every build. Builds never run inside it.
 
 Codex currently has missing WASI platform arms. The wrapper exports a separate
 compile copy and matches those arms by tokens, ignoring comments and whitespace.
-Unknown or ambiguous structures fail before any source is written. A release that
+File-search overlays also pin complete upstream and patched file hashes, so even
+unanchored source drift fails before any source is written. Unknown or ambiguous
+structures fail the same way. A release that
 needs a compatibility-rule change counts as needing an edit in #1072. Existing
 supported arms need no overlay. These rules stay in the wrapper until upstream
 ships equivalent support. The first contribution is tracked at
@@ -94,4 +96,6 @@ The native proof covers public fresh-thread creation with an existing sessions d
 checkpoint persistence and metadata-only reads before any model request. It also checks a
 positive fuzzy match before the CodeMode turn. WASI file-search uses a serial walker and
 the same fuzzy matcher because this target cannot create worker threads; each query walks
-again. Native platforms retain the upstream workers.
+again in batches of 256 entries, yielding to cancellation and other RPCs between
+batches. Result cutoffs retain Nucleo's score, path-length and insertion ordering.
+Native platforms retain the upstream workers.

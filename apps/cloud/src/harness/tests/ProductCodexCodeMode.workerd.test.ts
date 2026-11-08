@@ -126,6 +126,11 @@ describe("official Codex CodeMode through ProductComputer", () => {
       }),
     );
     expect(body.result.modelsBeforeTurn).toBe(0);
+    expect(body.result.cancelledSearch.directoriesRead).toBeGreaterThan(0);
+    expect(body.result.cancelledSearch.directoriesRead).toBeLessThan(
+      body.result.cancelledSearch.totalDirectories,
+    );
+    expect(body.result.cancelledSearch.directoriesRead).toBe(body.result.cancelledSearch.atStop);
     const spawns = body.result.nativeSpawns.filter(
       (spawn: { executable: string }) => spawn.executable === CODE_MODE_HOST_EXECUTABLE,
     );
