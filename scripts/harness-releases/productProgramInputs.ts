@@ -26,7 +26,7 @@ const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 const repository = NodePath.resolve(import.meta.dirname, "../..");
 export interface ProductProgramInputsOptions {
   readonly fetch?: typeof fetch;
-  readonly token?: string;
+  readonly token?: string | undefined;
   readonly repository?: string;
 }
 

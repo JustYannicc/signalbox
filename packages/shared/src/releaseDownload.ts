@@ -1,6 +1,6 @@
 export interface ReleaseDownloadOptions {
-  readonly fetch?: typeof fetch;
-  readonly token?: string;
+  readonly fetch?: typeof fetch | undefined;
+  readonly token?: string | undefined;
   readonly failurePrefix: string;
 }
 
@@ -41,7 +41,10 @@ export async function downloadRelease<T>(
           (async () => {
             let response: Response;
             try {
-              response = await fetchAsset(address, { signal: controller.signal, headers });
+              response = await fetchAsset(address, {
+                signal: controller.signal,
+                ...(headers === undefined ? {} : { headers }),
+              });
             } catch (cause) {
               throw failure("NETWORK", true, cause);
             }

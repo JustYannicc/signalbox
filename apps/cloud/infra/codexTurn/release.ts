@@ -31,7 +31,7 @@ export const CODEX_WASI_RELEASE = {
 /** Creates a fresh release directory only after every downloaded file matches its pin. */
 export async function fetchCodexRelease(
   output: string,
-  options: { readonly fetch?: typeof fetch; readonly token?: string } = {},
+  options: { readonly fetch?: typeof fetch; readonly token?: string | undefined } = {},
 ) {
   const files = await Promise.all(
     Object.entries(CODEX_WASI_RELEASE.files).map(async ([name, pin]) => {

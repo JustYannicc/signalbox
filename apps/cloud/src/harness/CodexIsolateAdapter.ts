@@ -15,6 +15,7 @@ import {
   startCodexHarnessProcess,
   type CodexHarnessProcessOptions,
 } from "./CodexHarnessProcess.ts";
+import { gatewayConfig } from "./codex/gatewayConfig.ts";
 import { createCodexFetch } from "./CodexNetwork.ts";
 import { makeCodexProcessClient } from "./CodexTransport.ts";
 import type { HarnessProcessObserver } from "./HarnessProcessLifetime.ts";
@@ -93,6 +94,13 @@ export function makeCodexIsolateAdapter(options: CodexIsolateAdapterOptions): {
                     try: () =>
                       startCodexHarnessProcess({
                         ...options.process,
+                        bootstrap: {
+                          ...options.process.bootstrap,
+                          overrides: gatewayConfig(
+                            options.process.bootstrap.overrides,
+                            options.modelOrigins[0] ?? "",
+                          ),
+                        },
                         fetch,
                         signal: lifetime.signal,
                       }),

@@ -1,4 +1,12 @@
-import { CodexSettings, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import { createNodeFs } from "../../../isolate/NodeFs.ts";
+import {
+  CodexSettings,
+  ProviderDriverKind,
+  ThreadId,
+  RunId,
+  RunAttemptId,
+  MessageId,
+} from "@t3tools/contracts";
 import { CODEX_DEFAULT_INSTANCE_ID } from "@signalbox/provider-codex/defaults";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -9,10 +17,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as Option from "effect/Option";
 import { makeCodexIsolateAdapter } from "../../CodexIsolateAdapter.ts";
 import type { CodexHarnessProcessOptions } from "../../CodexHarnessProcess.ts";
 import { dataForDriver } from "../../adapter/tests/data.ts";
-import { createNodeFs } from "../../../isolate/NodeFs.ts";
 
 const decodeSettings = Schema.decodeEffect(CodexSettings);
 const decodeThread = Schema.decodeUnknownEffect(
@@ -20,7 +29,7 @@ const decodeThread = Schema.decodeUnknownEffect(
 );
 const decodeMeta = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-export async function freshThread(process: CodexHarnessProcessOptions) {
+export async function freshThread(process: CodexHarnessProcessOptions, secret?: string) {
   const fs = createNodeFs(process.computer.files).fs;
   const home = process.bootstrap.codex_home;
   fs.mkdirSync(`${home}/sessions`, { recursive: true });
@@ -81,7 +90,6 @@ export async function freshThread(process: CodexHarnessProcessOptions) {
           modelTransport: process.fetch,
           creation: { providerThread },
         });
-        // This public wrapper performs materializeFreshCodexCheckpoint before returning.
         const thread = yield* runtime.ensureThread({
           ...session,
           existingProviderThread: providerThread,
@@ -90,11 +98,49 @@ export async function freshThread(process: CodexHarnessProcessOptions) {
         const native = yield* decodeThread(snapshot.providerPayload);
         const persisted = fs.readFileSync(native.path, "utf8");
         if (typeof persisted !== "string") throw new Error("Fresh rollout is not text");
+        const sessionMeta = yield* decodeMeta(persisted.split("\n")[0]!);
+        const completions: string[] = [];
+        if (secret !== undefined) {
+          for (const ordinal of [1, 2]) {
+            yield* runtime.startTurn({
+              rootNodeId: data.turn.rootNodeId,
+              threadId: session.threadId,
+              providerThread: thread,
+              runtimePolicy: session.runtimePolicy,
+              runId: RunId.make(`auth-${ordinal}`),
+              attemptId: RunAttemptId.make(`auth-${ordinal}`),
+              runOrdinal: ordinal,
+              providerTurnOrdinal: ordinal,
+              modelSelection: session.modelSelection,
+              appThread: {
+                ...data.turn.appThread,
+                id: session.threadId,
+                providerInstanceId: session.modelSelection.instanceId,
+                modelSelection: session.modelSelection,
+                activeProviderThreadId: thread.id,
+                lineage: { ...data.turn.appThread.lineage, rootThreadId: session.threadId },
+              },
+              message: {
+                ...data.turn.message,
+                messageId: MessageId.make(`auth-${ordinal}`),
+                text: `Remember this key: ${secret}`,
+              },
+            });
+            const completed = yield* runtime.events.pipe(
+              Stream.filter((event) => event.type === "turn.terminal"),
+              Stream.runHead,
+            );
+            const status = Option.isSome(completed) ? completed.value.status : "missing";
+            completions.push(status);
+            if (status !== "completed") break;
+          }
+        }
         return {
+          completions,
           snapshot: snapshot.providerPayload,
+          sessionMeta,
           input: input.join(""),
           nativeId: thread.nativeThreadRef?.nativeId,
-          sessionMeta: yield* decodeMeta(persisted.split("\n")[0]!),
           stderr,
         };
       }).pipe(
