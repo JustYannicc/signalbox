@@ -26,6 +26,7 @@ const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 const repository = NodePath.resolve(import.meta.dirname, "../..");
 export interface ProductProgramInputsOptions {
   readonly fetch?: typeof fetch;
+  readonly token?: string;
   readonly repository?: string;
 }
 
@@ -57,7 +58,12 @@ export async function fetchProductProgramInputs(
     const manifests = await Promise.all(
       RELEASE_MANIFESTS.map(async (pin, index) => {
         const url = `${PUBLISHED_ROOT}/${pin.tag}/program-inputs.json`;
-        const bytes = await fetchPinned(fetchAsset, { url, ...pin }, `manifest:${pin.tag}`);
+        const bytes = await fetchPinned(
+          fetchAsset,
+          { url, ...pin },
+          `manifest:${pin.tag}`,
+          options.token,
+        );
         await NodeFSP.writeFile(NodePath.join(manifestDirectory, `${pin.tag}.json`), bytes, {
           flag: "wx",
           mode: 0o444,
@@ -71,9 +77,16 @@ export async function fetchProductProgramInputs(
       programDirectory,
       manifests.map((manifest) => manifest.value),
       pins,
+      options.token,
     );
     await extractCoreutils(released.coreutilsArchive, programDirectory, pins);
-    const jqReceipt = await fetchJq(fetchAsset, programDirectory, workDirectory, pins);
+    const jqReceipt = await fetchJq(
+      fetchAsset,
+      programDirectory,
+      workDirectory,
+      pins,
+      options.token,
+    );
     const gitArchive = NodePath.join(workDirectory, "git-templates-source.tar.xz");
     await NodeFSP.writeFile(
       gitArchive,
@@ -85,6 +98,7 @@ export async function fetchProductProgramInputs(
           sha256: pins.gitTemplates.source.archiveSha256,
         },
         "git-templates:source",
+        options.token,
       ),
       { flag: "wx", mode: 0o600 },
     );

@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { downloadRelease } from "@t3tools/shared/releaseDownload";
 
 // The unchanged builder at this commit reproduced all four files byte for byte.
 export const CODEX_WASI_RELEASE = {
@@ -30,16 +31,15 @@ export const CODEX_WASI_RELEASE = {
 /** Creates a fresh release directory only after every downloaded file matches its pin. */
 export async function fetchCodexRelease(
   output: string,
-  options: { readonly fetch?: typeof fetch } = {},
+  options: { readonly fetch?: typeof fetch; readonly token?: string } = {},
 ) {
-  const fetchAsset = options.fetch ?? fetch;
   const files = await Promise.all(
     Object.entries(CODEX_WASI_RELEASE.files).map(async ([name, pin]) => {
-      const response = await fetchAsset(`${CODEX_WASI_RELEASE.url}/${name}`, {
-        signal: AbortSignal.timeout(120_000),
-      });
-      if (!response.ok) throw new Error(`CODEX_RELEASE_DOWNLOAD_FAILED:${name}:${response.status}`);
-      const bytes = new Uint8Array(await response.arrayBuffer());
+      const bytes = await downloadRelease(
+        `${CODEX_WASI_RELEASE.url}/${name}`,
+        async (response) => new Uint8Array(await response.arrayBuffer()),
+        { ...options, failurePrefix: `CODEX_RELEASE_DOWNLOAD_FAILED:${name}` },
+      );
       const sha256 = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
       if (bytes.byteLength !== pin.bytes || sha256 !== pin.sha256)
         throw new Error(`CODEX_RELEASE_INPUT_MISMATCH:${name}`);
