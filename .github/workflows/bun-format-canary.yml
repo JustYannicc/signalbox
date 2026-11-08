@@ -79,6 +79,7 @@ jobs:
 
       - name: Deploy the shared isolate probe
         id: deploy
+        # Destroy below needs this job's apps/cloud/.alchemy local state.
         working-directory: apps/cloud
         env:
           STAGE: ${{ steps.stage.outputs.stage }}

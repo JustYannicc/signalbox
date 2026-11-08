@@ -11,7 +11,7 @@ export default Alchemy.Stack(
   "SignalboxComputerBoxdProof",
   {
     providers: Cloudflare.providers(),
-    state: Cloudflare.state(),
+    state: Alchemy.localState(),
   },
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
