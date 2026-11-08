@@ -5,16 +5,16 @@ import * as NodePath from "node:path";
 
 // The unchanged builder at this commit reproduced all four files byte for byte.
 export const CODEX_WASI_RELEASE = {
-  sourceCommit: "75f8b1b1fec5dc9e1f473a0e415083cf9ce07acd",
-  url: "https://github.com/JustYannicc/signalbox/releases/download/kernel-programs-20261108-codex-f5de9ba8",
+  sourceCommit: "a0ac280c4229c63c1033299135e29a0925b754dc",
+  url: "https://github.com/JustYannicc/signalbox/releases/download/kernel-programs-20261108-codex-7645a1c9",
   files: {
     "manifest.json": {
       bytes: 10_634,
-      sha256: "d0c778dca7711bcab75a5e82c81fe2d3cb6be42c049bc8b7d17d136444d7aae4",
+      sha256: "6b4c0910d4cea934fb42b11786afc6f95758ec48921c5fde812f3d20d4757539",
     },
     "engine.wasm": {
-      bytes: 58_779_099,
-      sha256: "f5de9ba8ce543491778b54ae34567ed6c7e3ac50c4b30581b691bc169f879a4b",
+      bytes: 58_788_196,
+      sha256: "7645a1c99899d57ea3736f23b4cd1d71691fa9cbbdc0787fd244ca6f2c086921",
     },
     "loader.mjs": {
       bytes: 1_907,
