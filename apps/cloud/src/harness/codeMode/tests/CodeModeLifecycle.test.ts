@@ -11,7 +11,7 @@ vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 const identity = { sessionId: "s1", cellId: "1", tool_call_id: "outer-exec-call" };
 const completed = { terminated: false, error: null, writes: {} };
 
-it("reports started and completed only after physical stop and permit cleanup", async () => {
+it("reports started and completed after physical stop and joins permit cleanup on shutdown", async () => {
   const returned = Promise.withResolvers<void>();
   const events = Promise.withResolvers<CodeModeCellEvents>();
   const fixture = await lifecycleFixture({
@@ -33,10 +33,11 @@ it("reports started and completed only after physical stop and permit cleanup", 
       { ...identity, type: "started" },
       { ...identity, type: "closed", started: true, outcome: "completed", error: null },
     ]);
+    await fixture.client.close();
     expect(fixture.capacity.active).toBe(0);
   } finally {
     await (await events.promise).stopped();
-    await fixture.client.close();
+    await fixture.client.abort();
   }
 });
 
@@ -173,7 +174,7 @@ it("reports worker errors after stopped acknowledgement", async () => {
   }
 });
 
-it("reports permit cleanup failure as an error after physical stopping", async () => {
+it("reports permit cleanup failure through shutdown after publishing the completed execution", async () => {
   const capacity = cellCapacity();
   const acquire = capacity.acquire.bind(capacity);
   vi.spyOn(capacity, "acquire").mockImplementation(async (signal, requester, request) => {
@@ -205,14 +206,15 @@ it("reports permit cleanup failure as an error after physical stopping", async (
         ...identity,
         type: "closed",
         started: true,
-        outcome: "error",
-        error: "permit cleanup failed",
+        outcome: "completed",
+        error: null,
       },
     ]);
+    await expect(fixture.client.close()).rejects.toThrow("permit cleanup failed");
     expect(capacity.active).toBe(0);
   } finally {
     vi.restoreAllMocks();
-    await fixture.client.close();
+    await fixture.client.abort().catch(() => undefined);
   }
 });
 
@@ -234,9 +236,10 @@ it("does not let an observer failure skip execution or cleanup", async () => {
       { ...identity, type: "closed", started: true, outcome: "error", error: "observer failed" },
     ]);
     expect(JSON.stringify(response)).toContain("CodeMode lifecycle observer failed");
+    await fixture.client.close();
     expect(fixture.capacity.active).toBe(0);
   } finally {
-    await fixture.client.close();
+    await fixture.client.abort();
   }
 });
 

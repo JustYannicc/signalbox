@@ -92,12 +92,13 @@ it.each(["worker", "static"] as const)(
 );
 
 it.each(["result", "error"] as const)(
-  "withholds %s until stop, permit cleanup and terminal observation finish",
+  "publishes %s after stop and terminal observation while release waits for the result",
   async (mode) => {
     const callbacks = Promise.withResolvers<CodeModeCellEvents>();
     const returned = Promise.withResolvers<void>();
     const releasing = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
+    const resultReceived = Promise.withResolvers<void>();
     const closed = Promise.withResolvers<void>();
     const order: string[] = [];
     const capacity = cellCapacity();
@@ -108,6 +109,7 @@ it.each(["result", "error"] as const)(
         ...permit,
         async release() {
           releasing.resolve();
+          await resultReceived.promise;
           await release.promise;
           await permit.release();
         },
@@ -141,17 +143,27 @@ it.each(["result", "error"] as const)(
       await (await callbacks.promise).stopped();
       await releasing.promise;
       expect(capacity.active).toBe(1);
-      expect(JSON.stringify(await client.wait("1", 0).response)).toContain('"Yielded"');
-      expect(order).toEqual(["started"]);
-      release.resolve();
-      await closed.promise;
-      const result = await client.wait("1").response;
+      const result = await client.wait("1", 0).response;
       expect(JSON.stringify(result)).toContain('"Result"');
       if (mode === "error") expect(JSON.stringify(result)).toContain("worker failed");
       order.push("result");
       expect(order).toEqual(["started", "closed", "result"]);
+      resultReceived.resolve();
+      await closed.promise;
+      const shutdown = client.request({ method: "session/shutdown", sessionId: "s1" });
+      const barrier = client.open("barrier");
+      expect(
+        await Promise.race([
+          shutdown.response.then(() => "shutdown"),
+          barrier.then(() => "barrier"),
+        ]),
+      ).toBe("barrier");
+      expect(capacity.active).toBe(1);
+      release.resolve();
+      await shutdown.response;
       expect(capacity.active).toBe(0);
     } finally {
+      resultReceived.resolve();
       release.resolve();
       await (await callbacks.promise).stopped();
       vi.restoreAllMocks();

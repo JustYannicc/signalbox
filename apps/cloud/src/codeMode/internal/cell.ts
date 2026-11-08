@@ -27,6 +27,7 @@ export class CodeModeCell {
   readonly #sessionId: string;
   readonly #stopped = Promise.withResolvers<void>();
   readonly #cancelled = Promise.withResolvers<void>();
+  readonly #completion: Promise<void>;
   readonly #lifetime: Promise<void>;
   readonly #admissionController: AbortController;
   #closed = false;
@@ -119,8 +120,8 @@ export class CodeModeCell {
       tool_call_id: options.request.tool_call_id,
       observer: options.onLifecycle,
     });
-    this.#lifetime = (async () => {
-      let permit: CodeModeCellPermit | undefined;
+    let permit: CodeModeCellPermit | undefined;
+    this.#completion = (async () => {
       let loaderInvoked = false;
       try {
         permit = await options.cellCapacity.acquire(options.admissionController.signal, undefined);
@@ -157,7 +158,6 @@ export class CodeModeCell {
         if (loaderInvoked) await this.#stopped.promise;
       } finally {
         this.#closeCallbacks();
-        await permit?.release();
       }
     })()
       .catch((error: unknown) => {
@@ -174,6 +174,11 @@ export class CodeModeCell {
         this.#terminalReady = true;
         this.#wake();
       });
+    // The terminal event precedes the result. Permit release never gates the result;
+    // drain and shutdown still join it through the full lifetime.
+    this.#lifetime = this.#completion.then(async () => {
+      await permit?.release();
+    });
   }
 
   get admissionState() {
@@ -242,7 +247,7 @@ export class CodeModeCell {
       this.#acceptYield = false;
       this.#closeCallbacks();
     }
-    await this.#lifetime;
+    await this.#completion;
   }
 
   close() {
@@ -265,6 +270,10 @@ export class CodeModeCell {
 
   get lifetime() {
     return this.#lifetime;
+  }
+
+  get completion() {
+    return this.#completion;
   }
 
   #closeCallbacks() {

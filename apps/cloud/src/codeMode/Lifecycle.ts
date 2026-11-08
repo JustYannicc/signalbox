@@ -16,5 +16,5 @@ export type CodeModeLifecycleEvent = CodeModeCellIdentity &
       }
   );
 
-/** Synchronous observation. Exceptions become cell errors after physical cleanup completes. */
+/** Synchronous observation. Exceptions become cell errors after the worker stops. */
 export type CodeModeLifecycleObserver = (event: CodeModeLifecycleEvent) => void;
