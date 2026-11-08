@@ -4,6 +4,9 @@ import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
 import { createKernelProcessStreams } from "../kernel/KernelProcessStreams.ts";
 import { runCodeModeHostConnection } from "../codeMode/Connection.ts";
 import type { CodeModeCellCode, CodeModeCellLoaderPort } from "../codeMode/Types.ts";
+import type { CodeModeLifecycleObserver } from "../codeMode/Lifecycle.ts";
+
+export type { CodeModeLifecycleEvent, CodeModeLifecycleObserver } from "../codeMode/Lifecycle.ts";
 
 export { runCodeModeHostConnection } from "../codeMode/Connection.ts";
 export type { CodeModeConnectionOptions } from "../codeMode/Connection.ts";
@@ -28,6 +31,7 @@ export function createCodeModeHostProgram(options: {
   /** Separate so a yielded cell cannot hold a command slot. */
   readonly capacity: Pick<CodeModeCellCapacity, "acquire">;
   readonly code: CodeModeCellCode;
+  readonly onLifecycle?: CodeModeLifecycleObserver | undefined;
 }) {
   const code: CodeModeCellCode = Object.freeze({
     mainModule: options.code.mainModule,
@@ -55,6 +59,7 @@ export function createCodeModeHostProgram(options: {
           loader: options.loader,
           cellCapacity: options.capacity,
           code,
+          onLifecycle: options.onLifecycle,
         }).then(() => ({
           exitCode: 0,
           signal: context.signal.aborted ? 15 : 0,

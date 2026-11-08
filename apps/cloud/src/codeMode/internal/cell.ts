@@ -1,5 +1,7 @@
 // @effect-diagnostics globalTimers:off - V1 observations use request-owned host timers outside Effect.
 import type { CodeModeCellCapacity, CodeModeCellPermit } from "../Capacity.ts";
+import type { CodeModeLifecycleObserver } from "../Lifecycle.ts";
+import { CodeModeCellLifecycle } from "./lifecycle.ts";
 import type { CodeModeDelegates } from "./delegates.ts";
 import {
   messageError,
@@ -25,10 +27,12 @@ export class CodeModeCell {
   readonly #sessionId: string;
   readonly #stopped = Promise.withResolvers<void>();
   readonly #cancelled = Promise.withResolvers<void>();
+  readonly #completion: Promise<void>;
   readonly #lifetime: Promise<void>;
   readonly #admissionController: AbortController;
   #closed = false;
   #final: "Result" | "Terminated" | undefined;
+  #terminalReady = false;
   #error: string | null = null;
   #yielded: CodeModeContent[] | undefined;
   #acceptYield = false;
@@ -48,6 +52,7 @@ export class CodeModeCell {
     cellCapacity: Pick<CodeModeCellCapacity, "acquire">;
     storedValues: () => Readonly<Record<string, Json>>;
     admissionSettled: () => void;
+    onLifecycle?: CodeModeLifecycleObserver | undefined;
     delegates: CodeModeDelegates;
     commit: (writes: Readonly<Record<string, Json>>) => void;
   }) {
@@ -59,6 +64,7 @@ export class CodeModeCell {
       once: true,
     });
     const events: CodeModeCellEvents = {
+      started: async () => lifecycle.start(),
       emit: async (event) => {
         if (this.#closed || this.#controller.signal.aborted) return;
         if (event.type === "content") this.#output.push(event.item);
@@ -108,15 +114,21 @@ export class CodeModeCell {
       closeCallbacks: async () => this.#closeCallbacks(),
       stopped: async () => this.#stopped.resolve(),
     };
-    this.#lifetime = (async () => {
-      let permit: CodeModeCellPermit | undefined;
-      let started = false;
+    const lifecycle = new CodeModeCellLifecycle({
+      sessionId: options.sessionId,
+      cellId: options.id,
+      tool_call_id: options.request.tool_call_id,
+      observer: options.onLifecycle,
+    });
+    let permit: CodeModeCellPermit | undefined;
+    this.#completion = (async () => {
+      let loaderInvoked = false;
       try {
         permit = await options.cellCapacity.acquire(options.admissionController.signal, undefined);
         options.admissionController.signal.throwIfAborted();
         this.#admission = undefined;
         options.admissionSettled();
-        started = true;
+        loaderInvoked = true;
         const completion = await options.loader.run(
           { code: options.code, request: options.request, storedValues: options.storedValues() },
           events,
@@ -132,20 +144,20 @@ export class CodeModeCell {
       } catch (error) {
         options.admissionSettled();
         this.#closeCallbacks();
-        if (options.admissionController.signal.aborted) {
+        if (
+          !loaderInvoked &&
+          options.admissionController.signal.aborted &&
+          error === options.admissionController.signal.reason
+        ) {
           this.#admission = "cancelled";
-          this.#final = "Terminated";
-        } else if (this.#controller.signal.aborted) {
           this.#final = "Terminated";
         } else {
           this.#error = messageError(error);
           this.#final = "Result";
         }
-        this.#wake();
-        if (started) await this.#stopped.promise;
+        if (loaderInvoked) await this.#stopped.promise;
       } finally {
         this.#closeCallbacks();
-        await permit?.release();
       }
     })()
       .catch((error: unknown) => {
@@ -153,8 +165,20 @@ export class CodeModeCell {
         this.#final = "Result";
       })
       .finally(() => {
+        try {
+          lifecycle.close(this.#final === "Terminated", this.#error);
+        } catch (error) {
+          this.#error = messageError(error);
+          this.#final = "Result";
+        }
+        this.#terminalReady = true;
         this.#wake();
       });
+    // The terminal event precedes the result. Permit release never gates the result;
+    // drain and shutdown still join it through the full lifetime.
+    this.#lifetime = this.#completion.then(async () => {
+      await permit?.release();
+    });
   }
 
   get admissionState() {
@@ -184,7 +208,7 @@ export class CodeModeCell {
         const yielded = this.#yielded;
         this.#yielded = undefined;
         if (yielded !== undefined) return { Yielded: { ...body, content_items: yielded } };
-        if (this.#final !== undefined) {
+        if (this.#terminalReady) {
           return this.terminalResponse();
         }
         if (signal.aborted) return { Yielded: { ...body, content_items: this.#output.splice(0) } };
@@ -223,7 +247,7 @@ export class CodeModeCell {
       this.#acceptYield = false;
       this.#closeCallbacks();
     }
-    await this.#lifetime;
+    await this.#completion;
   }
 
   close() {
@@ -246,6 +270,10 @@ export class CodeModeCell {
 
   get lifetime() {
     return this.#lifetime;
+  }
+
+  get completion() {
+    return this.#completion;
   }
 
   #closeCallbacks() {

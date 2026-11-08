@@ -25,6 +25,9 @@ class CellEvents extends RpcTarget implements CodeModeWorkerEvents {
     this.#events = events;
     this.#deferStopped = deferStopped;
   }
+  started() {
+    return this.#events.started();
+  }
   emit(event: Parameters<CodeModeCellEvents["emit"]>[0]) {
     return this.#events.emit(event);
   }
@@ -42,8 +45,8 @@ class CellEvents extends RpcTarget implements CodeModeWorkerEvents {
     return this.#events.closeCallbacks();
   }
   stopped() {
-    if (!this.#deferStopped) return this.#events.stopped();
     this.stoppedRequested = true;
+    if (!this.#deferStopped) return this.#events.stopped();
     return Promise.resolve();
   }
   aborting(error: string | null) {
@@ -116,8 +119,8 @@ export function createCodeModeWorkerLoader(options: {
       } catch (cause) {
         failure = { cause };
       } finally {
-        // Releasing handles is insufficient to stop suspended ESM; aborting acknowledges only
-        // after abortIsolate has rejected the child RPC and torn down its I/O context.
+        // A rejected worker RPC has ended its request context. Successful calls still need
+        // the trusted wrapper's stop acknowledgement; releasing handles alone cannot supply it.
         for (const stub of [entrypoint, worker]) {
           if (stub === undefined) continue;
           try {
@@ -128,7 +131,12 @@ export function createCodeModeWorkerLoader(options: {
           }
         }
         try {
-          if (!started || bridge.stoppedRequested || bridge.abortRequested !== undefined) {
+          if (
+            !started ||
+            failure !== undefined ||
+            bridge.stoppedRequested ||
+            bridge.abortRequested !== undefined
+          ) {
             try {
               if (!bridge.callbacksClosed) await events.closeCallbacks();
             } finally {
@@ -158,7 +166,29 @@ export function createCodeModeServiceLoader(service: {
     events: CodeModeCellEvents & RpcTarget,
   ) => Promise<CodeModeCellCompletion>;
 }): CodeModeCellLoaderPort {
-  return { run: (input, events) => service.run(input, new CellEvents(events)) };
+  return {
+    async run(input, events) {
+      const bridge = new CellEvents(events);
+      try {
+        return await service.run(input, bridge);
+      } catch (cause) {
+        const failures = [cause];
+        try {
+          if (!bridge.callbacksClosed) await bridge.closeCallbacks();
+        } catch (error) {
+          failures.push(error);
+        }
+        try {
+          if (!bridge.stoppedRequested) await bridge.stopped();
+        } catch (error) {
+          failures.push(error);
+        }
+        if (failures.length > 1)
+          throw new AggregateError(failures, "CodeMode service cleanup failed", { cause });
+        throw cause;
+      }
+    },
+  };
 }
 
 function validateSource(source: string) {

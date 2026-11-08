@@ -95,6 +95,7 @@ notify("done");
     const order: string[] = [];
     const input = codeModeInvocation(code, 'text("before"); await tools.slow({}); text("after");');
     const events: CodeModeCellEvents = {
+      started: async () => {},
       emit: async () => {
         throw new Error("output transport failed");
       },

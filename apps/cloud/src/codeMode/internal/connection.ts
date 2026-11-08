@@ -1,4 +1,5 @@
 import type { CodeModeCellCapacity } from "../Capacity.ts";
+import type { CodeModeLifecycleObserver } from "../Lifecycle.ts";
 import { CodeModeDelegates } from "./delegates.ts";
 import { encodeCodeModeFrame, readCodeModeFrames } from "./frames.ts";
 import { parseCodeModeMessage } from "./protocol.ts";
@@ -24,6 +25,7 @@ export interface CodeModeConnectionOptions {
   readonly loader: CodeModeCellLoaderPort;
   readonly code: CodeModeCellCode;
   readonly cellCapacity: Pick<CodeModeCellCapacity, "acquire">;
+  readonly onLifecycle?: CodeModeLifecycleObserver | undefined;
 }
 
 export async function runCodeModeHostConnection(options: CodeModeConnectionOptions) {

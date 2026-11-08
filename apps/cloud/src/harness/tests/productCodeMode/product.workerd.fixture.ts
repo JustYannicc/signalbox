@@ -21,6 +21,7 @@ import { CODE_MODE_HOST_EXECUTABLE } from "../../CodeModeHost.ts";
 import type { KernelCommand } from "../../../kernel/KernelCommandForwarder.ts";
 import { appServerDriver } from "./driver.ts";
 import { codeModeResponses } from "./model.ts";
+import type { CodeModeLifecycleEvent } from "../../../codeMode/Lifecycle.ts";
 
 interface Env {
   readonly LOADER: WorkerLoader;
@@ -57,6 +58,7 @@ export class Host extends DurableObject<Env> {
     });
     const machineCalls: string[] = [];
     const cellTools: unknown[] = [];
+    const lifecycle: CodeModeLifecycleEvent[] = [];
     const loader = createAssetChildWorkerLoader(
       this.env.LOADER,
       async (hash) => asset(hash).buffer,
@@ -80,6 +82,7 @@ export class Host extends DurableObject<Env> {
       signal: controller.signal,
       capacity,
       loader: observedLoader,
+      onCodeModeLifecycle: (event) => lifecycle.push(event),
       programs: createSeededCommandProgramCodes(this.env.SOURCES),
       machineInventory: machineInventoryFixture(),
       machine: () => ({
@@ -122,7 +125,31 @@ export class Host extends DurableObject<Env> {
         },
       };
     };
-    const model = codeModeResponses();
+    const resultObservations: {
+      tool_call_id: string;
+      lifecycle: CodeModeLifecycleEvent[];
+    }[] = [];
+    const model = codeModeResponses((body) => {
+      if (!Array.isArray(body.input)) return;
+      const input: readonly unknown[] = body.input;
+      for (const item of input) {
+        if (
+          typeof item !== "object" ||
+          item === null ||
+          !("type" in item) ||
+          !("call_id" in item) ||
+          item.type !== "custom_tool_call_output" ||
+          typeof item.call_id !== "string" ||
+          resultObservations.some((result) => result.tool_call_id === item.call_id)
+        )
+          continue;
+        // Snapshot at the engine's first delivery of this result, before any teardown.
+        resultObservations.push({
+          tool_call_id: item.call_id,
+          lifecycle: lifecycle.filter((event) => event.tool_call_id === item.call_id),
+        });
+      }
+    });
     let driver: ReturnType<typeof appServerDriver> | undefined;
     let result: unknown;
     try {
@@ -216,6 +243,8 @@ export class Host extends DurableObject<Env> {
         execCalls,
         machineCalls,
         cellTools,
+        lifecycle,
+        resultObservations,
         execWire,
         modelRequests: model.requests,
         frames: driver.frames,

@@ -20,6 +20,7 @@ import { createComputerMachineProfile } from "./ComputerMachineProfile.ts";
 import { createKernelExecutableNamespace } from "../kernel/KernelExecutableNamespace.ts";
 import { createCodeModeHostProgram } from "./CodeModeHost.ts";
 import { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
+import type { CodeModeLifecycleObserver } from "../codeMode/Lifecycle.ts";
 
 export interface ProductComputerOptions extends Omit<
   CommandGatewayOptions,
@@ -42,6 +43,7 @@ export interface ProductComputerOptions extends Omit<
     readonly files: MachineFilesPort;
   };
   readonly signal: AbortSignal;
+  readonly onCodeModeLifecycle?: CodeModeLifecycleObserver | undefined;
   readonly loader:
     | ChildWorkerLoaderPort
     | {
@@ -131,6 +133,7 @@ export function createProductComputer(options: ProductComputerOptions) {
                 },
               },
               code: programs.codeMode,
+              onLifecycle: options.onCodeModeLifecycle,
             });
           })();
     gateway = createCommandGateway({

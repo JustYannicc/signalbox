@@ -1,4 +1,5 @@
 import type { CodeModeCellCapacity } from "../Capacity.ts";
+import type { CodeModeLifecycleObserver } from "../Lifecycle.ts";
 import { CodeModeCell, type CellObservation } from "./cell.ts";
 import type { CodeModeDelegates } from "./delegates.ts";
 import type {
@@ -15,6 +16,7 @@ interface SessionOptions {
   loader: CodeModeCellLoaderPort;
   code: CodeModeCellCode;
   cellCapacity: Pick<CodeModeCellCapacity, "acquire">;
+  onLifecycle?: CodeModeLifecycleObserver | undefined;
   delegates: CodeModeDelegates;
   send: (message: unknown) => void;
 }
@@ -23,6 +25,7 @@ export class CodeModeSession {
   readonly #values = new Map<string, Json>();
   readonly #cells = new Map<string, CodeModeCell>();
   readonly #lifetimes = new Set<Promise<void>>();
+  readonly #failures: unknown[] = [];
   readonly #options: SessionOptions;
   #nextId = 1;
   #closing = false;
@@ -52,6 +55,7 @@ export class CodeModeSession {
       admissionController: admission,
       cellCapacity: this.#options.cellCapacity,
       admissionSettled: detach,
+      onLifecycle: this.#options.onLifecycle,
       delegates: this.#options.delegates,
       commit: (writes) => {
         for (const [key, value] of Object.entries(writes)) this.#values.set(key, value);
@@ -59,10 +63,16 @@ export class CodeModeSession {
     });
     this.#cells.set(id, cell);
     this.#lifetimes.add(cell.lifetime);
-    void cell.lifetime.finally(() => {
-      this.#lifetimes.delete(cell.lifetime);
+    void cell.completion.then(() => {
       if (cell.admissionState === "cancelled") this.#close(cell);
     });
+    void cell.lifetime.then(
+      () => this.#lifetimes.delete(cell.lifetime),
+      (error: unknown) => {
+        this.#failures.push(error);
+        this.#lifetimes.delete(cell.lifetime);
+      },
+    );
     return cell;
   }
 
@@ -100,9 +110,12 @@ export class CodeModeSession {
   async shutdown() {
     this.#closing = true;
     await Promise.all([...this.#cells.values()].map((cell) => cell.terminate()));
-    await Promise.all(this.#lifetimes);
+    await Promise.allSettled(this.#lifetimes);
     for (const cell of this.#cells.values()) this.#close(cell);
     this.#values.clear();
+    if (this.#failures.length === 1) throw this.#failures[0];
+    if (this.#failures.length > 1)
+      throw new AggregateError(this.#failures, "CodeMode session cleanup failed");
   }
 
   #close(cell: CodeModeCell) {
@@ -110,7 +123,7 @@ export class CodeModeSession {
     this.#cells.delete(cell.id);
     // Closing a queued cell withdraws its capacity request before the cell can outlive the session.
     cell.close();
-    void cell.lifetime.then(() =>
+    void cell.completion.then(() =>
       this.#options.send({ type: "cell/closed", sessionId: this.#options.id, cellId: cell.id }),
     );
   }

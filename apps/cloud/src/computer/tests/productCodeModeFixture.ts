@@ -10,6 +10,7 @@ import { commandProgramCodes } from "../commandGatewayTesting.ts";
 import { childBusyboxFixture } from "../childBusyboxTesting.ts";
 import { emptyMachineFilesFixture, machineInventoryFixture } from "../machineInventoryTesting.ts";
 import type { ChildWorkerLoaderPort } from "../WorkerLoaderDispatch.ts";
+import type { CodeModeLifecycleObserver } from "../../codeMode/Lifecycle.ts";
 
 type Message = Record<string, unknown>;
 
@@ -17,6 +18,7 @@ export async function productCodeModeFixture(options: {
   code: CodeModeCellCode;
   cells: CodeModeCellLoaderPort;
   run?: ChildWorkerLoaderPort["run"];
+  onLifecycle?: CodeModeLifecycleObserver;
   onDelegate?: (
     computer: ReturnType<typeof createProductComputer>,
     message: Message,
@@ -32,6 +34,7 @@ export async function productCodeModeFixture(options: {
     filesystem: kernel.filesystem,
     wakes: kernel.context.wakes,
     signal: new AbortController().signal,
+    onCodeModeLifecycle: options.onLifecycle,
     capacity,
     programs: { ...commandProgramCodes(), codeMode: options.code },
     loader: {

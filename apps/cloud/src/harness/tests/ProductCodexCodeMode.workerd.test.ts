@@ -152,6 +152,29 @@ describe.skipIf(releaseDir === undefined || programDir === undefined)(
           (item: { call_id?: string }) => item.call_id === "call-output" && "output" in item,
         );
         expect(JSON.stringify(echoed)).toContain("code-mode-output");
+        expect(body.result.resultObservations).toHaveLength(2);
+        for (const tool_call_id of ["call-code-mode", "call-output"]) {
+          const { lifecycle } = body.result.resultObservations.find(
+            (result: { tool_call_id: string }) => result.tool_call_id === tool_call_id,
+          );
+          expect(lifecycle).toEqual([
+            expect.objectContaining({ type: "started", tool_call_id }),
+            expect.objectContaining({
+              type: "closed",
+              started: true,
+              outcome: "completed",
+              error: null,
+              tool_call_id,
+              sessionId: lifecycle[0].sessionId,
+              cellId: lifecycle[0].cellId,
+            }),
+          ]);
+          expect(
+            body.result.lifecycle.filter(
+              (event: { tool_call_id: string }) => event.tool_call_id === tool_call_id,
+            ),
+          ).toEqual(lifecycle);
+        }
       } finally {
         await harness?.close();
         await NodeFSP.rm(staging, { recursive: true, force: true });

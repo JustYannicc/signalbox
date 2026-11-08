@@ -5,6 +5,7 @@ import type {
 } from "../../CodeModeHost.ts";
 import { runCodeModeHostConnection } from "../../CodeModeHost.ts";
 import { ChildWorkerCapacity } from "../../../computer/ChildWorkerCapacity.ts";
+import type { CodeModeLifecycleObserver } from "../../../codeMode/Lifecycle.ts";
 
 export function hostClient(
   loader: CodeModeCellLoaderPort,
@@ -13,6 +14,7 @@ export function hostClient(
     RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
     owner: "test/src-harness-codemode-tests-client-1",
   }),
+  onLifecycle?: CodeModeLifecycleObserver,
 ) {
   let enqueue: ReadableStreamDefaultController<Uint8Array>;
   const input = new ReadableStream<Uint8Array>({
@@ -47,6 +49,7 @@ export function hostClient(
     loader,
     code,
     cellCapacity: capacity,
+    onLifecycle,
   });
   void finished.catch(() => undefined);
   let nextId = 1;
