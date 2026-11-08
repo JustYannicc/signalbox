@@ -13,6 +13,7 @@ def fixture():
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         rules = json.loads((Path(__file__).parent / 'compatibility/file-search.json').read_text())['rules']
+        hashes = {}
         for name in dict.fromkeys(rule['path'] for rule in rules if 'asset' not in rule):
             group = [rule for rule in rules if rule['path'] == name]
             source = '\n'.join(overlay._text(rule, 'before') for rule in group)
@@ -23,10 +24,10 @@ def fixture():
             output = source
             for rule in group:
                 output = overlay._replace(output, rule)
-            group[0]['source_sha256'] = hashlib.sha256(source.encode()).hexdigest()
-            group[0]['patched_sha256'] = hashlib.sha256(output.encode()).hexdigest()
+            hashes[name] = {'source_sha256': hashlib.sha256(source.encode()).hexdigest(),
+                            'patched_sha256': hashlib.sha256(output.encode()).hexdigest()}
         path = root / rules[0]['path']
-        with patch.object(overlay, '_rules', return_value=rules):
+        with patch.object(overlay, '_rules', return_value=rules), patch.object(overlay, '_source_hashes', return_value=hashes):
             yield root, rules, path
 
 class FileSearchTests(unittest.TestCase):

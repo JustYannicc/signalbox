@@ -6,8 +6,8 @@ checkout is hashed before and after every build. Builds never run inside it.
 
 Codex currently has missing WASI platform arms. The wrapper exports a separate
 compile copy and matches those arms by tokens, ignoring comments and whitespace.
-File-search overlays also pin complete upstream and patched file hashes, so even
-unanchored source drift fails before any source is written. Unknown or ambiguous
+Every overlaid official file requires complete upstream and patched hashes for each target, so even
+unanchored source drift or a missing hash fails before any source is written. Unknown or ambiguous
 structures fail the same way. A release that
 needs a compatibility-rule change counts as needing an edit in #1072. Existing
 supported arms need no overlay. These rules stay in the wrapper until upstream

@@ -51,6 +51,22 @@ def snapshot(root):
             for path in root.rglob("*") if path.is_file()}
 
 
+def fixture_hashes(root, rules):
+    grouped = {}
+    for rule in rules:
+        if 'asset' not in rule:
+            grouped.setdefault(rule['path'], []).append(rule)
+    result = {}
+    for name, group in grouped.items():
+        source = (root / name).read_bytes()
+        output = source.decode()
+        for rule in group:
+            output = overlay._replace(output, rule)
+        result[name] = {'source_sha256': hashlib.sha256(source).hexdigest(),
+                        'patched_sha256': hashlib.sha256(output.encode()).hexdigest()}
+    return result
+
+
 class OverlayTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -63,6 +79,10 @@ class OverlayTests(unittest.TestCase):
         mocked = patch.object(overlay, "_rules", return_value=[self.rule])
         mocked.start()
         self.addCleanup(mocked.stop)
+        hashes = fixture_hashes(self.root, [self.rule])
+        guarded = patch.object(overlay, "_source_hashes", return_value=hashes)
+        guarded.start()
+        self.addCleanup(guarded.stop)
 
     def apply(self):
         return overlay.apply_overlay(self.root, TARGET)
@@ -77,20 +97,17 @@ class OverlayTests(unittest.TestCase):
         self.assertEqual(self.apply(), [])
         self.assertEqual(self.path.read_text(), result)
 
-    def test_comment_and_whitespace_drift_survives(self):
-        source = PLATFORM.replace('#[cfg(not(any(unix, windows)))]',
-                                  '# [ cfg ( not ( any ( unix, /* nested /* ok */ */ windows ) ) ) ]')
-        source = source.replace('compile_error!', '// retained comment\ncompile_error !')
-        self.path.write_text(source)
-        self.apply()
-        self.assertIn('// retained comment', self.path.read_text())
-        self.assertIn('/* nested /* ok */ */', self.path.read_text())
-        self.assertEqual(self.apply(), [])
+    def test_comment_and_whitespace_drift_fails_before_writing(self):
+        self.path.write_text(PLATFORM.replace('compile_error!', '// drift\ncompile_error !'))
+        original = snapshot(self.root)
+        with self.assertRaisesRegex(overlay.OverlayError, 'expected source sha256'):
+            self.apply()
+        self.assertEqual(snapshot(self.root), original)
 
     def test_changed_cfg_fails_without_writing(self):
         self.path.write_text(PLATFORM.replace('not(any(unix, windows))', 'not(unix)'))
         original = snapshot(self.root)
-        with self.assertRaisesRegex(overlay.OverlayError, 'symlink-arm.*#1072'):
+        with self.assertRaisesRegex(overlay.OverlayError, '#1072'):
             self.apply()
         self.assertEqual(snapshot(self.root), original)
 
@@ -101,13 +118,13 @@ class OverlayTests(unittest.TestCase):
 
     def test_ambiguous_structure_fails(self):
         self.path.write_text(PLATFORM + PLATFORM)
-        with self.assertRaisesRegex(overlay.OverlayError, 'found 2/0'):
+        with self.assertRaisesRegex(overlay.OverlayError, '#1072'):
             self.apply()
 
     def test_upstream_equivalent_arm_is_not_applied_again(self):
         old = overlay._text(self.rule, "before")
         new = overlay._text(self.rule, "after")
-        self.path.write_text(PLATFORM.replace(old, new))
+        self.path.write_text(overlay._replace(PLATFORM, self.rule))
         original = self.path.read_bytes()
         self.assertEqual(self.apply(), [])
         self.assertEqual(self.path.read_bytes(), original)
@@ -115,13 +132,13 @@ class OverlayTests(unittest.TestCase):
     def test_different_upstream_wasi_arm_is_rejected(self):
         self.path.write_text(PLATFORM + '\n#[cfg(target_os = "wasi")]\n'
                              'pub fn create_symlink() { todo!() }\n')
-        with self.assertRaisesRegex(overlay.OverlayError, 'unrecognized WASI arm'):
+        with self.assertRaisesRegex(overlay.OverlayError, '#1072'):
             self.apply()
 
     def test_duplicate_old_and_new_arms_are_rejected(self):
         self.apply()
         self.path.write_text(self.path.read_text() + PLATFORM)
-        with self.assertRaisesRegex(overlay.OverlayError, 'both old and WASI'):
+        with self.assertRaisesRegex(overlay.OverlayError, '#1072'):
             self.apply()
 
     def test_validation_failure_is_atomic_across_files(self):
@@ -215,22 +232,26 @@ class OfficialSourceTests(unittest.TestCase):
         # No CLI entrypoint, WebSocket policy, or code-mode policy is in the surface.
         self.assertFalse(any('/exec/' in item['path'] for item in changes))
 
-    def test_unpinned_rules_accept_comment_and_whitespace_drift(self):
-        pinned = {rule["path"] for rule in self.rules if "source_sha256" in rule}
-        for path in self.root.rglob('*'):
-            if path.is_file() and str(path.relative_to(self.root)) not in pinned:
-                toml = path.suffix == '.toml'
-                source = path.read_text()
-                tokens = tokenize(source, toml)
-                if toml:
-                    path.write_text('\n# drift\n'.join(source.splitlines()) + '\n')
-                else:
-                    gap = ' /* drift /* nested */ */\n '
-                    path.write_text(gap.join(token.value for token in tokens) + '\n')
-        overlay.apply_overlay(self.root, TARGET)
-        self.assertEqual(overlay.apply_overlay(self.root, TARGET), [])
-        for path in self.root.rglob('Cargo.toml'):
-            tomllib.loads(path.read_text())
+    def test_every_official_file_requires_a_hash_entry(self):
+        for target in overlay._TARGETS:
+            paths = {rule['path'] for rule in overlay._target_rules(target) if 'asset' not in rule}
+            self.assertEqual(paths, set(overlay._source_hashes(target)))
+        hashes = dict(overlay._source_hashes(TARGET))
+        del hashes['codex-rs/rollout/src/recorder.rs']
+        original = snapshot(self.root)
+        with patch.object(overlay, '_source_hashes', return_value=hashes):
+            with self.assertRaisesRegex(overlay.OverlayError, 'missing or invalid expected source sha256'):
+                overlay.apply_overlay(self.root, TARGET)
+        self.assertEqual(snapshot(self.root), original)
+
+    def test_unanchored_recorder_append_change_fails_before_any_write(self):
+        path = self.root / 'codex-rs/rollout/src/recorder.rs'
+        self.assertIn('.append(true)', path.read_text())
+        path.write_text(path.read_text().replace('.append(true)', '.append(false)', 1))
+        original = snapshot(self.root)
+        with self.assertRaisesRegex(overlay.OverlayError, 'expected source sha256'):
+            overlay.apply_overlay(self.root, TARGET)
+        self.assertEqual(snapshot(self.root), original)
 
     def test_pinned_file_rejects_unanchored_walker_change(self):
         path = self.root / 'codex-rs/file-search/src/lib.rs'
@@ -254,7 +275,7 @@ class OfficialSourceTests(unittest.TestCase):
         with path.open('a') as output:
             output.write('\n[target.\'cfg(not(target_os = "wasi"))\'.dependencies]\nnative-tls = "0.3"\n')
         original = snapshot(self.root)
-        with self.assertRaisesRegex(overlay.OverlayError, 'unrecognized WASI arm'):
+        with self.assertRaisesRegex(overlay.OverlayError, '#1072'):
             overlay.apply_overlay(self.root, TARGET)
         self.assertEqual(snapshot(self.root), original)
 

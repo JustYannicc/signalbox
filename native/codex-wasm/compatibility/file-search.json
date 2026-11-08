@@ -5,9 +5,7 @@
       "rule": "file-search-wasi-module-declaration",
       "path": "codex-rs/file-search/src/lib.rs",
       "before": ["mod snapshot;"],
-      "after": ["mod snapshot;", "#[cfg(any(target_os = \"wasi\", test))]", "mod wasi;"],
-      "source_sha256": "f60d465950ae874852cc8ea808dfda6ed5a29e8a59b8f3d0b055d7da46e637a3",
-      "patched_sha256": "dd2a547e68c3d79ca9158f7ffbd549b215d233feb64b7394049b6a40186f1a57"
+      "after": ["mod snapshot;", "#[cfg(any(target_os = \"wasi\", test))]", "mod wasi;"]
     },
     {
       "rule": "file-search-wasi-update",
@@ -31,8 +29,8 @@
         "                let snapshot = wasi::search(inner.clone(), query, generation).await;",
         "                if inner.generation.load(Ordering::Relaxed) == generation {",
         "                    inner.reporter.on_update(&snapshot);",
+        "                    inner.reporter.on_complete();",
         "                }",
-        "                inner.reporter.on_complete();",
         "            });",
         "        }",
         "        #[cfg(not(target_os = \"wasi\"))]",
@@ -285,9 +283,7 @@
         "            #[cfg(target_os = \"wasi\")]",
         "            let results = results.await;",
         "            let results = results.map_err(|e| io::Error::other(format!(\"file search failed: {e}\")))?;"
-      ],
-      "source_sha256": "f92f85133073f15778f57751bf655a4e7373e52eee5f66e9afbcfb745d3b48d8",
-      "patched_sha256": "c446f88a785a59baa8a1c85d818a8bac1bfb53e2e9dc32260b656074a8fba4cb"
+      ]
     },
     {
       "rule": "file-search-wasi-app-server-await",
@@ -338,9 +334,7 @@
         "        )",
         "    }).await;",
         "    let mut files = match result {"
-      ],
-      "source_sha256": "542eb1e54f23b86c89d86c7a2435c5c426aa236c1274e5f41b50f37737a07282",
-      "patched_sha256": "8d1906f66ca6a095be1dd2a9bf409d2365da4de7e1a746a691a36aeb00f4221a"
+      ]
     },
     {
       "rule": "file-search-wasi-matcher-test-state",
@@ -354,9 +348,7 @@
         "        search_directories: vec![root.path().to_path_buf()],",
         "        override_matcher: None,",
         "        generation: std::sync::atomic::AtomicU64::new(0),"
-      ],
-      "source_sha256": "335fa07c000bf9027c01f27cee3d0c2e4501a4f2fc800598aa094bcf6692e285",
-      "patched_sha256": "bc7b6d30bf93a75f3387b5b3ce9f9701007ae30458752e6baec6833afaa7b791"
+      ]
     },
     {
       "rule": "file-search-wasi-module",

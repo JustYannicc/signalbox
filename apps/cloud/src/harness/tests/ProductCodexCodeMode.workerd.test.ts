@@ -131,6 +131,14 @@ describe("official Codex CodeMode through ProductComputer", () => {
       body.result.cancelledSearch.totalDirectories,
     );
     expect(body.result.cancelledSearch.directoriesRead).toBe(body.result.cancelledSearch.atStop);
+    const searchEvents = body.result.replacedSearch.events;
+    const completions = searchEvents.filter(
+      (event: { method: string }) => event.method === "fuzzyFileSearch/sessionCompleted",
+    );
+    expect(completions).toHaveLength(1);
+    expect(searchEvents.at(-1)?.method).toBe("fuzzyFileSearch/sessionCompleted");
+    expect(searchEvents.at(-2)?.query).toBe("009");
+    expect(searchEvents[0]?.query).toBe("directory");
     const spawns = body.result.nativeSpawns.filter(
       (spawn: { executable: string }) => spawn.executable === CODE_MODE_HOST_EXECUTABLE,
     );

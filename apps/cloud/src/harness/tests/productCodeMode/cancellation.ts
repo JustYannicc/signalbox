@@ -38,3 +38,34 @@ export async function cancelSearch(
     },
   };
 }
+
+export async function supersedeSearch(
+  files: KernelFileSystem,
+  driver: ReturnType<typeof appServerDriver>,
+) {
+  const root = "/work/replace-search";
+  files.mkdir(root);
+  for (let i = 0; i < 1024; i++) files.mkdir(`${root}/directory-${String(i).padStart(4, "0")}`);
+  const sessionId = "replace-during-walk";
+  await driver.request("fuzzyFileSearch/sessionStart", {
+    sessionId,
+    roots: [root],
+  });
+  await driver.request("fuzzyFileSearch/sessionUpdate", { sessionId, query: "directory" });
+  await driver.waitFor(
+    (frame) =>
+      frame.method === "fuzzyFileSearch/sessionUpdated" && frame.params?.sessionId === sessionId,
+  );
+  await driver.request("fuzzyFileSearch/sessionUpdate", { sessionId, query: "009" });
+  await driver.waitFor(
+    (frame) =>
+      frame.method === "fuzzyFileSearch/sessionCompleted" && frame.params?.sessionId === sessionId,
+  );
+  return {
+    get events() {
+      return driver.frames
+        .filter((frame) => frame.params?.sessionId === sessionId)
+        .map((frame) => ({ method: frame.method, query: frame.params?.query }));
+    },
+  };
+}

@@ -5,6 +5,7 @@ interface Frame {
   readonly method?: string;
   readonly params?: {
     readonly sessionId?: string;
+    readonly query?: string;
     readonly turn?: { readonly status: string };
     readonly thread?: { readonly id: string };
   };

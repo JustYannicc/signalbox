@@ -1,5 +1,5 @@
 import { createNodeFs } from "../../../isolate/NodeFs.ts";
-import { cancelSearch } from "./cancellation.ts";
+import { cancelSearch, supersedeSearch } from "./cancellation.ts";
 import ENGINE from "./codex-engine.wasm";
 import { CodexExecSessions } from "../../../kernel/CodexExecSessions.ts";
 import { DurableObject } from "cloudflare:workers";
@@ -234,6 +234,7 @@ export class Host extends DurableObject<Env> {
         const fuzzy = await driver.request("fuzzyFileSearch", { query: "evrt", roots: ["/work"] });
         const modelsBeforeTurn = model.requests.length;
         const cancelledSearch = await cancelSearch(files, storage, driver);
+        const replacedSearch = await supersedeSearch(files, driver);
         const started = await driver.request("thread/start", {
           cwd: "/work",
           model: "gpt-5.5",
@@ -257,6 +258,7 @@ export class Host extends DurableObject<Env> {
           fuzzy,
           modelsBeforeTurn,
           cancelledSearch,
+          replacedSearch,
           nativeSpawns,
           execCalls,
           machineCalls,
