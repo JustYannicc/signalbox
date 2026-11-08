@@ -93,8 +93,9 @@ artifact pins disagree. Its bootstrap enables `host_capabilities.standard_form_i
 so an engine that rejects the current protocol cannot pass the native turn.
 
 The native proof covers public fresh-thread creation with an existing sessions directory,
-checkpoint persistence and metadata-only reads before any model request. It also checks a
-positive fuzzy match before the CodeMode turn. WASI file-search uses a serial walker and
+checkpoint persistence and metadata-only reads before any model request. File-search
+matching, cancellation and query replacement run in a separate native Computer so their
+configuration discovery cannot occupy the CodeMode turn's exec-server session. WASI file-search uses a serial walker and
 the same fuzzy matcher because this target cannot create worker threads; each query walks
 again in batches of 256 entries, yielding to cancellation and other RPCs between
 batches. Result cutoffs retain Nucleo's score, path-length and insertion ordering.

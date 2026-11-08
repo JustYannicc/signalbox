@@ -1,6 +1,32 @@
 import type { createFacetSqliteStorage } from "../../../kernel/FacetSqliteStorage.ts";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import type { appServerDriver } from "./driver.ts";
+import { createNodeFs } from "../../../isolate/NodeFs.ts";
+
+export async function fileSearchProof(
+  files: KernelFileSystem,
+  storage: ReturnType<typeof createFacetSqliteStorage>,
+  driver: ReturnType<typeof appServerDriver>,
+) {
+  const readdir = storage.readdir;
+  try {
+    createNodeFs(files).fs.writeFileSync("/work/evening-routine.md", "fixture\n");
+    const fuzzy = await driver.request("fuzzyFileSearch", { query: "evrt", roots: ["/work"] });
+    const cancelled = await cancelSearch(files, storage, driver);
+    const replaced = await supersedeSearch(files, driver);
+    return {
+      fuzzy,
+      cancelledSearch: {
+        atStop: cancelled.atStop,
+        totalDirectories: cancelled.totalDirectories,
+        directoriesRead: cancelled.directoriesRead,
+      },
+      replacedSearch: { events: replaced.events },
+    };
+  } finally {
+    storage.readdir = readdir;
+  }
+}
 
 export async function cancelSearch(
   files: KernelFileSystem,
@@ -61,6 +87,7 @@ export async function supersedeSearch(
     (frame) =>
       frame.method === "fuzzyFileSearch/sessionCompleted" && frame.params?.sessionId === sessionId,
   );
+  await driver.request("fuzzyFileSearch/sessionStop", { sessionId });
   return {
     get events() {
       return driver.frames

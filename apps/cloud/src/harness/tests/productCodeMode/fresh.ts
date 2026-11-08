@@ -101,11 +101,18 @@ export async function freshThread(process: CodexHarnessProcessOptions, secret?: 
         const sessionMeta = yield* decodeMeta(persisted.split("\n")[0]!);
         const completions: string[] = [];
         if (secret !== undefined) {
+          // Checkpoint preparation unloads the thread; the product host resumes it for a turn.
+          const resumed = yield* runtime.resumeThread({
+            providerThread: thread,
+            threadId: session.threadId,
+            modelSelection: session.modelSelection,
+            runtimePolicy: session.runtimePolicy,
+          });
           for (const ordinal of [1, 2]) {
             yield* runtime.startTurn({
               rootNodeId: data.turn.rootNodeId,
               threadId: session.threadId,
-              providerThread: thread,
+              providerThread: resumed,
               runtimePolicy: session.runtimePolicy,
               runId: RunId.make(`auth-${ordinal}`),
               attemptId: RunAttemptId.make(`auth-${ordinal}`),
@@ -117,7 +124,7 @@ export async function freshThread(process: CodexHarnessProcessOptions, secret?: 
                 id: session.threadId,
                 providerInstanceId: session.modelSelection.instanceId,
                 modelSelection: session.modelSelection,
-                activeProviderThreadId: thread.id,
+                activeProviderThreadId: resumed.id,
                 lineage: { ...data.turn.appThread.lineage, rootThreadId: session.threadId },
               },
               message: {
