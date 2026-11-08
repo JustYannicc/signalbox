@@ -235,6 +235,30 @@ jobs:
             --directory .t3/issue-1263/programs/coreutils \
             --strip-components=1
 
+      - name: Cache pinned Codex product proof inputs
+        id: codex_product_cache
+        if: ${{ matrix.partition == 'cloud-1' }}
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ runner.temp }}/codex-code-mode-release
+            ${{ runner.temp }}/codex-code-mode-programs
+          key: codex-product-${{ runner.os }}-${{ hashFiles('apps/cloud/infra/codexTurn/release.ts', 'apps/cloud/infra/kernelPrograms/**', 'apps/cloud/infra/childPrograms/gitTemplates.manifest.json', 'apps/cloud/src/kernel/*Program*.ts', 'scripts/harness-releases/productProgram*.ts') }}
+
+      - name: Fetch pinned Codex product proof inputs
+        if: ${{ matrix.partition == 'cloud-1' && steps.codex_product_cache.outputs.cache-hit != 'true' }}
+        run: |
+          node apps/cloud/infra/codexTurn/fetchRelease.ts --output "$RUNNER_TEMP/codex-code-mode-release"
+          node scripts/harness-releases/fetchProductPrograms.ts --output "$RUNNER_TEMP/codex-code-mode-programs"
+
+      - name: Test native Codex CodeMode
+        if: ${{ matrix.partition == 'cloud-1' }}
+        env:
+          SIGNALBOX_CODE_MODE_RELEASE_DIR: ${{ runner.temp }}/codex-code-mode-release
+          SIGNALBOX_CODE_MODE_PROGRAM_DIR: ${{ runner.temp }}/codex-code-mode-programs
+          VITEST_MAX_WORKERS: "1"
+        run: node .github/scripts/workerd-admission.cjs run vp test run apps/cloud/src/harness/tests/ProductCodexCodeMode.workerd.test.ts
+
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
@@ -300,7 +324,8 @@ jobs:
           export VITEST_MAX_WORKERS=$((test_workers > 0 ? test_workers : 1))
           echo "Test budget: $runner_cpus CPUs, $TEST_PACKAGE_RUNNERS packages, $VITEST_MAX_WORKERS Vitest workers per package"
           if [[ "$TEST_PARTITION" == cloud-* ]]; then
-            node .github/scripts/workerd-admission.cjs run vp run --filter @signalbox/cloud test --shard "${TEST_PARTITION#cloud-}/3"
+            # The native Codex proof runs once above with its complete pinned inputs.
+            node .github/scripts/workerd-admission.cjs run vp run --filter @signalbox/cloud test --exclude '**/ProductCodexCodeMode.workerd.test.ts' --shard "${TEST_PARTITION#cloud-}/3"
             exit
           fi
           filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' --filter '!@signalbox/cloud')

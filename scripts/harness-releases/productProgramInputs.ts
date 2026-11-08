@@ -12,12 +12,7 @@ import {
   parseProgramManifest,
   requireHttps,
 } from "./productProgramAssets.ts";
-import {
-  buildGit,
-  buildProductBusybox,
-  extractGitTemplates,
-  fetchJq,
-} from "./productProgramBuilds.ts";
+import { extractGitTemplates, fetchJq } from "./productProgramBuilds.ts";
 import {
   preserveProgramInputFailure,
   safeBuildEnvironment,
@@ -34,7 +29,7 @@ export interface ProductProgramInputsOptions {
   readonly repository?: string;
 }
 
-/** Fetches current public program assets and builds the two outputs absent from releases. */
+/** Downloads pinned public artifacts and verifies the complete product program set. */
 export async function fetchProductProgramInputs(
   outputDirectory: string,
   options: ProductProgramInputsOptions = {},
@@ -79,18 +74,21 @@ export async function fetchProductProgramInputs(
     );
     await extractCoreutils(released.coreutilsArchive, programDirectory, pins);
     const jqReceipt = await fetchJq(fetchAsset, programDirectory, workDirectory, pins);
-    const gitReceipt = await buildGit(repositoryRoot, programDirectory, workDirectory, pins);
-    const gitTemplatesReceipt = await extractGitTemplates(
-      gitReceipt.sourceArchive,
-      programDirectory,
-      pins,
+    const gitArchive = NodePath.join(workDirectory, "git-templates-source.tar.xz");
+    await NodeFSP.writeFile(
+      gitArchive,
+      await fetchPinned(
+        fetchAsset,
+        {
+          url: pins.gitTemplates.source.archiveUrl,
+          bytes: pins.gitTemplates.source.archiveBytes,
+          sha256: pins.gitTemplates.source.archiveSha256,
+        },
+        "git-templates:source",
+      ),
+      { flag: "wx", mode: 0o600 },
     );
-    const productBusyboxReceipt = await buildProductBusybox(
-      repositoryRoot,
-      programDirectory,
-      workDirectory,
-      pins,
-    );
+    const gitTemplatesReceipt = await extractGitTemplates(gitArchive, programDirectory, pins);
     const prepared = await verifyWithPublicPreparer(repositoryRoot, programDirectory);
     assertPreparedShape(prepared, pins);
 
@@ -110,7 +108,7 @@ export async function fetchProductProgramInputs(
         bytes: pin.bytes,
         sha256: pin.sha256,
       })),
-      builtPrograms: [gitReceipt.receipt, productBusyboxReceipt],
+      builtPrograms: [],
       gitTemplates: gitTemplatesReceipt,
       jq: jqReceipt,
       prepared,
