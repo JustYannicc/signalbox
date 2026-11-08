@@ -69,7 +69,7 @@ resume, tools, MCP and interruption belong to #1069 and the #1072 release replay
 
 The hooks packager and native ProductComputer CodeMode test share the release pin in
 [`release.ts`](../../apps/cloud/infra/codexTurn/release.ts). The public artifact comes from
-[`kernel-programs-20261108-codex-33e30977`](https://github.com/JustYannicc/signalbox/releases/tag/kernel-programs-20261108-codex-33e30977).
+[`kernel-programs-20261108-codex-f5de9ba8`](https://github.com/JustYannicc/signalbox/releases/tag/kernel-programs-20261108-codex-f5de9ba8).
 Its notes record the source, builder, toolchain and manifest hash. The downloader verifies
 the size and SHA-256 of the manifest, engine, loader and Cargo.lock.
 
@@ -89,3 +89,9 @@ Signalbox CI fetches and caches these same inputs, then runs this test once in `
 before the ordinary cloud shards. The test fails when either input is missing or its
 artifact pins disagree. Its bootstrap enables `host_capabilities.standard_form_input`,
 so an engine that rejects the current protocol cannot pass the native turn.
+
+The native proof covers public fresh-thread creation with an existing sessions directory,
+checkpoint persistence and metadata-only reads before any model request. It also checks a
+positive fuzzy match before the CodeMode turn. WASI file-search uses a serial walker and
+the same fuzzy matcher because this target cannot create worker threads; each query walks
+again. Native platforms retain the upstream workers.
