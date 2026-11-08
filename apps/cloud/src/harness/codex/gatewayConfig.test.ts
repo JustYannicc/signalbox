@@ -1,5 +1,5 @@
 import { expect, it } from "vite-plus/test";
-import { gatewayConfig } from "./gatewayConfig.ts";
+import { gatewayConfig } from "../testing.ts";
 
 it.each([
   {},
