@@ -9,7 +9,7 @@ export default Alchemy.Stack(
   "SignalboxBoxdSpike",
   {
     providers: Cloudflare.providers(),
-    state: Cloudflare.state(),
+    state: Alchemy.localState(),
   },
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;

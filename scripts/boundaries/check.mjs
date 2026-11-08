@@ -6,6 +6,7 @@ import * as NodeUtil from "node:util";
 import { getAvailableTranspilers } from "dependency-cruiser";
 
 import { checkBaseline, unrecordedBaseCycles, violationKey } from "./baseline.mjs";
+import { checkAlchemyState } from "./alchemy-state.mjs";
 import { scanBase } from "./base.mjs";
 import { mergedHead } from "../upstream-sync/mergeTree.ts";
 import { scanGraph } from "./graph.mjs";
@@ -35,6 +36,15 @@ export async function checkBoundaries(root, values, legacyBase = LEGACY_CYCLE_BA
   // Missing upstream is a setup error, never a downgrade.
   const upstream = readUpstreamSource(git, values.upstream, candidate);
   const files = [...new Set(git(["ls-files", "-c", "-o", "--exclude-standard"]).split("\n"))];
+  // Scan the merged candidate in CI, just as the dependency boundary check does.
+  const stateFiles = candidate
+    ? git(["ls-tree", "-r", "--name-only", candidate]).split("\n")
+    : files;
+  const stateErrors = checkAlchemyState(
+    root,
+    stateFiles,
+    candidate ? (file) => git(["show", `${candidate}:${file}`]) : undefined,
+  );
   if (!getAvailableTranspilers().some((item) => item.name === "typescript" && item.available)) {
     throw new Error(
       "The compatible TypeScript parser is required to scan TypeScript, including type-only imports. Run vp i.",
@@ -98,7 +108,8 @@ export async function checkBoundaries(root, values, legacyBase = LEGACY_CYCLE_BA
   ).violations;
   const baselineErrors = checkBaseline(baseline, previous, errors.map(violationKey));
   const known = new Set(baseline);
-  let errorCount = baselineErrors.length;
+  let errorCount = baselineErrors.length + stateErrors.length;
+  for (const message of stateErrors) console.error(`error ${message}`);
   let warningCount = 0;
   let knownCount = 0;
   let legacyCount = 0;

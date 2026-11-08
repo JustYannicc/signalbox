@@ -11,6 +11,7 @@ import { checkBaseline, violationKey } from "./baseline.mjs";
 import { cyclicViolations } from "./cycles.mjs";
 import "./cycle-tests.mjs";
 import "./comparison-tests.mjs";
+import "./alchemy-state-tests.mjs";
 import { readUpstreamSource, sourceOwnership, VENDORED_ROOTS } from "./upstream.mjs";
 import { workspaceAliases, workspaceTarget, workspaceViolations } from "./workspaces.mjs";
 
