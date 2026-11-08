@@ -19,6 +19,7 @@ export interface ExecSessionHandler {
 type Send = (message: Reply | Notification) => void | Promise<void>;
 type Session = {
   readonly id: string;
+  readonly owner: object | undefined;
   readonly abort: AbortController;
   readonly handler: ExecSessionHandler;
   send: Send | undefined;
@@ -27,6 +28,11 @@ type Session = {
   timer: ReturnType<typeof setTimeout> | undefined;
   detachedUntil: number | undefined;
   cleanup: Promise<void> | undefined;
+};
+
+type Connection = {
+  readonly signal: AbortSignal;
+  session: Session | undefined;
 };
 
 interface SessionOptions {
@@ -64,11 +70,10 @@ export class CodexExecSessions {
     }
   }
 
-  connect(send: Send, closeTransport?: (code: number, reason: string) => void) {
+  connect(send: Send, closeTransport?: (code: number, reason: string) => void, owner?: object) {
     if (this.#closed) throw new RpcError(-32600, "Exec-server is closed");
-    const identity = {};
     const abort = new AbortController();
-    let session: Session | undefined;
+    const identity: Connection = { signal: abort.signal, session: undefined };
     let initialized = false;
     let initializeRequested = false;
     let closed = false;
@@ -79,6 +84,7 @@ export class CodexExecSessions {
       closed = true;
       abort.abort();
       this.#connections.delete(disconnect);
+      const session = identity.session;
       if (session?.connection === identity) {
         session.connection = undefined;
         session.disconnect = undefined;
@@ -109,13 +115,20 @@ export class CodexExecSessions {
         initializeRequested = true;
         try {
           const params = initializeParams(message.params);
-          session = this.#attach(params.resumeSessionId, identity, sendIfOpen, disconnect);
+          const session = await this.#attach(
+            params.resumeSessionId,
+            identity,
+            sendIfOpen,
+            disconnect,
+            owner,
+          );
           return { sessionId: session.id, environmentInfo: this.#options.environmentInfo };
         } catch (error) {
           initializeRequested = false;
           throw error;
         }
       }
+      const session = identity.session;
       if (!session || !initialized)
         return invalidRequest("Client must initialize and send initialized before using methods");
       if (message.method === "environment/info") return this.#options.environmentInfo;
@@ -143,7 +156,7 @@ export class CodexExecSessions {
           return;
         }
         if (message.id === undefined) {
-          if (message.method === "initialized" && session) initialized = true;
+          if (message.method === "initialized" && identity.session) initialized = true;
           else disconnect(1002, "Unexpected exec-server notification");
           return;
         }
@@ -191,17 +204,19 @@ export class CodexExecSessions {
       throw new AggregateError(failures, "Exec-server session cleanup failed");
   }
 
-  #attach(
+  async #attach(
     resumeId: string | undefined,
-    connection: object,
+    connection: Connection,
     send: Send,
     disconnect: () => void,
-  ): Session {
+    owner: object | undefined,
+  ): Promise<Session> {
     if (this.#closed) return invalidRequest("Exec-server is closed");
     let session: Session;
     if (resumeId !== undefined) {
       const existing = this.#sessions.get(resumeId);
       if (!existing) return invalidRequest("Unknown session id");
+      if (existing.owner !== owner) return invalidRequest("Session belongs to another process");
       if (existing.abort.signal.aborted) return invalidRequest("Session is closed");
       if (existing.detachedUntil !== undefined && Date.now() >= existing.detachedUntil) {
         void this.#remove(existing).catch(this.#options.onCleanupError);
@@ -214,12 +229,32 @@ export class CodexExecSessions {
       session.timer = undefined;
       session.detachedUntil = undefined;
     } else {
+      // The host supplies process identity; a JSON client cannot claim another process's session.
+      if (owner !== undefined) {
+        for (const previous of this.#sessions.values()) {
+          if (
+            previous.owner !== owner ||
+            previous.connection ||
+            previous.detachedUntil === undefined
+          )
+            continue;
+          try {
+            await this.#remove(previous);
+          } catch (error) {
+            this.#options.onCleanupError(error);
+            throw new RpcError(-32603, "Exec-server session supersession cleanup failed");
+          }
+        }
+      }
+      if (this.#closed) return invalidRequest("Exec-server is closed");
+      if (connection.signal.aborted) return invalidRequest("Exec-server connection is closed");
       if (this.#sessions.size >= this.#maxSessions)
         throw new RpcError(-32603, "Too many exec-server sessions");
       const id = crypto.randomUUID();
       const abort = new AbortController();
       const created: Session = {
         id,
+        owner,
         abort,
         handler: this.#options.createSession({
           sessionId: id,
@@ -242,6 +277,7 @@ export class CodexExecSessions {
       session = created;
       this.#sessions.set(id, session);
     }
+    connection.session = session;
     session.connection = connection;
     session.disconnect = disconnect;
     session.send = send;

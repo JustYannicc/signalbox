@@ -7,6 +7,7 @@ export function acceptCodexExecWebSocket(
   request: Request,
   sessions: CodexExecSessions,
   lifetime: Pick<DurableObjectState, "waitUntil">,
+  owner?: object,
 ): Response {
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
     return new Response("Expected a WebSocket upgrade", { status: 426 });
@@ -23,6 +24,7 @@ export function acceptCodexExecWebSocket(
     (code, reason) => {
       if (server.readyState === WebSocket.OPEN) server.close(code, reason);
     },
+    owner,
   );
   const close = (code: number, reason: string) => {
     if (server.readyState === WebSocket.OPEN) server.close(code, reason);

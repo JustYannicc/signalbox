@@ -29,7 +29,11 @@ const decodeThread = Schema.decodeUnknownEffect(
 );
 const decodeMeta = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-export async function freshThread(process: CodexHarnessProcessOptions, secret?: string) {
+export async function freshThread(
+  process: CodexHarnessProcessOptions,
+  secret?: string,
+  checkpoint?: { readonly beforeFirstTurn: () => void },
+) {
   const fs = createNodeFs(process.computer.files).fs;
   const home = process.bootstrap.codex_home;
   fs.mkdirSync(`${home}/sessions`, { recursive: true });
@@ -101,6 +105,7 @@ export async function freshThread(process: CodexHarnessProcessOptions, secret?: 
         const sessionMeta = yield* decodeMeta(persisted.split("\n")[0]!);
         const completions: string[] = [];
         if (secret !== undefined) {
+          checkpoint?.beforeFirstTurn();
           // Checkpoint preparation unloads the thread; the product host resumes it for a turn.
           const resumed = yield* runtime.resumeThread({
             providerThread: thread,
@@ -108,7 +113,7 @@ export async function freshThread(process: CodexHarnessProcessOptions, secret?: 
             modelSelection: session.modelSelection,
             runtimePolicy: session.runtimePolicy,
           });
-          for (const ordinal of [1, 2]) {
+          for (const ordinal of checkpoint === undefined ? [1, 2] : [1]) {
             yield* runtime.startTurn({
               rootNodeId: data.turn.rootNodeId,
               threadId: session.threadId,

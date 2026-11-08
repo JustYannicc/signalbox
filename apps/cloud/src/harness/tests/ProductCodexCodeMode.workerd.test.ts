@@ -12,6 +12,7 @@ import { prepareChildPrograms } from "../../../infra/childPrograms/prepare.ts";
 import { CODEX_WASI_RELEASE } from "../../../infra/codexTurn/release.ts";
 import { CODE_MODE_HOST_EXECUTABLE } from "../../computer/CodeModeManifest.ts";
 import { CODE_MODE_SOURCE } from "./productCodeMode/model.ts";
+import { retentionClockPlugin } from "./productCodeMode/retentionClockBuild.ts";
 
 const releaseDir = NodeProcess.env.SIGNALBOX_CODE_MODE_RELEASE_DIR;
 const programDir = NodeProcess.env.SIGNALBOX_CODE_MODE_PROGRAM_DIR;
@@ -31,7 +32,9 @@ async function runProof(
     | "fresh-dotted"
     | "fresh-flat"
     | "auth-default"
-    | "auth-openai",
+    | "auth-openai"
+    | "reconnect"
+    | "reconnect-control",
 ) {
   if (!releaseDir || !programDir)
     throw new Error(
@@ -77,6 +80,7 @@ async function runProof(
       conditions: ["workerd", "worker", "browser"],
       external: ["cloudflare:workers", "node:*", "./codex-engine.wasm"],
       write: false,
+      plugins: route.startsWith("reconnect") ? [retentionClockPlugin()] : [],
     });
     const main = NodePath.join(staging, "main.mjs");
     await NodeFSP.writeFile(main, built.outputFiles[0]!.text);
@@ -115,6 +119,32 @@ async function runProof(
 }
 
 describe("official Codex CodeMode through ProductComputer", () => {
+  it.each(["reconnect-control", "reconnect"] as const)(
+    "admits exec sessions through public creation and first turn: %s",
+    async (route) => {
+      const body = await runProof(route);
+      expect(body.result.initializationErrors).toEqual([]);
+      expect(body.result.completions).toEqual(["completed"]);
+      expect(body.active).toBe(0);
+      expect(body.processes).toBe(0);
+      if (route === "reconnect-control")
+        expect(
+          body.result.execWire.filter(
+            (entry: {
+              readonly direction: string;
+              readonly message?: { readonly method?: string };
+            }) => entry.direction === "in" && entry.message?.method === "initialize",
+          ),
+        ).toHaveLength(1);
+      else {
+        const admission = body.result.admission;
+        expect(admission).toMatchObject({ retainedUntil: 100, admittedAt: 1 });
+        expect(admission.sessionId).not.toBe(admission.previousSessionId);
+        expect(admission.admittedAt).toBeLessThan(admission.retainedUntil);
+      }
+    },
+    120_000,
+  );
   it("spawns the companion natively and executes the recorded exec source through the exec server", async () => {
     const body = await runProof("run");
     expect(body).toMatchObject({

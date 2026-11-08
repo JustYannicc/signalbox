@@ -1,5 +1,6 @@
 import { fileSearchProof } from "./cancellation.ts";
 import ENGINE from "./codex-engine.wasm";
+import { retentionClock } from "./retentionClock.ts";
 import { CodexExecSessions } from "../../../kernel/CodexExecSessions.ts";
 import { DurableObject } from "cloudflare:workers";
 import { createProductComputer } from "../../../computer/ProductComputer.ts";
@@ -40,7 +41,16 @@ interface Env {
 
 export class Host extends DurableObject<Env> {
   async run(
-    provider?: "search" | "default" | "openai" | "dotted" | "flat" | "auth-default" | "auth-openai",
+    provider?:
+      | "search"
+      | "default"
+      | "openai"
+      | "dotted"
+      | "flat"
+      | "auth-default"
+      | "auth-openai"
+      | "reconnect",
+    disconnectExec = false,
   ) {
     const fresh = provider !== undefined && provider !== "search";
     const wakes = new KernelWakeRegistry();
@@ -112,17 +122,64 @@ export class Host extends DurableObject<Env> {
     };
     const execCalls: KernelCommand[] = [];
     const execWire: unknown[] = [];
+    let detach: (() => void) | undefined;
+    let outage = false;
+    const initializationErrors: unknown[] = [];
+    let initialSessionId: string | undefined;
+    let retainedUntil: number | undefined;
+    let admission:
+      | {
+          sessionId: string;
+          previousSessionId: string;
+          admittedAt: number;
+          retainedUntil: number | undefined;
+        }
+      | undefined;
     const connect = CodexExecSessions.prototype.connect;
-    CodexExecSessions.prototype.connect = function (send, disconnect) {
+    CodexExecSessions.prototype.connect = function (send, disconnect, owner) {
+      let initializeId: unknown;
       const connection = connect.call(
         this,
         (message) => {
+          if (
+            provider === "reconnect" &&
+            (("id" in message && message.id === 1) || "error" in message)
+          )
+            execWire.push({ direction: "out", message });
+          if (provider === "reconnect" && "id" in message && message.id === initializeId) {
+            if ("error" in message) {
+              initializationErrors.push(message.error);
+              // Let a broken implementation finish so the assertion reports the rejected admission.
+              retentionClock.advance(retentionClock.ttlMs);
+            } else if (
+              "result" in message &&
+              typeof message.result === "object" &&
+              message.result !== null &&
+              "sessionId" in message.result &&
+              typeof message.result.sessionId === "string"
+            ) {
+              if (initialSessionId === undefined) initialSessionId = message.result.sessionId;
+              else
+                admission = {
+                  sessionId: message.result.sessionId,
+                  previousSessionId: initialSessionId,
+                  admittedAt: retentionClock.now,
+                  retainedUntil,
+                };
+            }
+          }
           if ("method" in message && message.method.startsWith("process/"))
             execWire.push({ direction: "out", message });
           return send(message);
         },
         disconnect,
+        owner,
       );
+      detach ??= () => {
+        if (!disconnectExec) return;
+        outage = true;
+        connection.disconnect(1011, "Fixture host transport outage");
+      };
       return {
         get closed() {
           return connection.closed;
@@ -130,6 +187,21 @@ export class Host extends DurableObject<Env> {
         disconnect: connection.disconnect,
         receive(text) {
           const message = JSON.parse(text);
+          if (provider === "reconnect") {
+            if (message.method === "initialize") {
+              initializeId = message.id;
+              execWire.push({ direction: "in", message });
+              if (outage && !message.params?.resumeSessionId) {
+                retainedUntil = retentionClock.nextDeadline;
+                retentionClock.advance(1);
+              }
+            }
+            // Keep recovery offline until Codex gives up; its next fresh connection can reach the host.
+            if (outage && message.method === "initialize" && message.params?.resumeSessionId) {
+              connection.disconnect(1011, "Fixture host transport outage");
+              return Promise.resolve();
+            }
+          }
           if (typeof message.method === "string" && message.method.startsWith("process/"))
             execWire.push({ direction: "in", message });
           return connection.receive(text);
@@ -160,7 +232,7 @@ export class Host extends DurableObject<Env> {
           lifecycle: lifecycle.filter((event) => event.tool_call_id === item.call_id),
         });
       }
-    });
+    }, provider !== "reconnect");
     const auth =
       provider === "auth-default" || provider === "auth-openai"
         ? await authenticatedGateway()
@@ -264,7 +336,12 @@ export class Host extends DurableObject<Env> {
       } satisfies CodexHarnessProcessOptions;
       if (fresh) {
         result = {
-          ...(await freshThread(processOptions, auth?.secret)),
+          ...(await freshThread(
+            processOptions,
+            provider === "reconnect" ? "reconnect-test" : auth?.secret,
+            provider === "reconnect" ? { beforeFirstTurn: () => detach?.() } : undefined,
+          )),
+          ...(provider === "reconnect" ? { execWire, initializationErrors, admission } : {}),
           authentication:
             auth === undefined
               ? null
@@ -346,20 +423,23 @@ export default {
         await env.HOST.getByName(new URL(request.url).pathname).run(
           new URL(request.url).pathname === "/search"
             ? "search"
-            : new URL(request.url).pathname === "/fresh-default" ||
-                new URL(request.url).pathname === "/fresh"
-              ? "default"
-              : new URL(request.url).pathname === "/fresh-openai"
-                ? "openai"
-                : new URL(request.url).pathname === "/fresh-dotted"
-                  ? "dotted"
-                  : new URL(request.url).pathname === "/fresh-flat"
-                    ? "flat"
-                    : new URL(request.url).pathname === "/auth-default"
-                      ? "auth-default"
-                      : new URL(request.url).pathname === "/auth-openai"
-                        ? "auth-openai"
-                        : undefined,
+            : ["/reconnect", "/reconnect-control"].includes(new URL(request.url).pathname)
+              ? "reconnect"
+              : new URL(request.url).pathname === "/fresh-default" ||
+                  new URL(request.url).pathname === "/fresh"
+                ? "default"
+                : new URL(request.url).pathname === "/fresh-openai"
+                  ? "openai"
+                  : new URL(request.url).pathname === "/fresh-dotted"
+                    ? "dotted"
+                    : new URL(request.url).pathname === "/fresh-flat"
+                      ? "flat"
+                      : new URL(request.url).pathname === "/auth-default"
+                        ? "auth-default"
+                        : new URL(request.url).pathname === "/auth-openai"
+                          ? "auth-openai"
+                          : undefined,
+          new URL(request.url).pathname === "/reconnect",
         ),
       );
     } catch (error) {
