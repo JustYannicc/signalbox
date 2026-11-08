@@ -1,5 +1,7 @@
 import { fileSearchProof } from "./cancellation.ts";
 import ENGINE from "./codex-engine.wasm";
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
 import { CodexExecSessions } from "../../../kernel/CodexExecSessions.ts";
 import { DurableObject } from "cloudflare:workers";
 import { createProductComputer } from "../../../computer/ProductComputer.ts";
@@ -40,7 +42,16 @@ interface Env {
 
 export class Host extends DurableObject<Env> {
   async run(
-    provider?: "search" | "default" | "openai" | "dotted" | "flat" | "auth-default" | "auth-openai",
+    provider?:
+      | "search"
+      | "default"
+      | "openai"
+      | "dotted"
+      | "flat"
+      | "auth-default"
+      | "auth-openai"
+      | "reconnect",
+    disconnectExec = false,
   ) {
     const fresh = provider !== undefined && provider !== "search";
     const wakes = new KernelWakeRegistry();
@@ -112,17 +123,33 @@ export class Host extends DurableObject<Env> {
     };
     const execCalls: KernelCommand[] = [];
     const execWire: unknown[] = [];
+    let detach: (() => void) | undefined;
+    let outage = false;
+    const now = () => Effect.runSync(Clock.currentTimeMillis);
+    const startedAt = now();
     const connect = CodexExecSessions.prototype.connect;
-    CodexExecSessions.prototype.connect = function (send, disconnect) {
+    CodexExecSessions.prototype.connect = function (send, disconnect, owner) {
       const connection = connect.call(
         this,
         (message) => {
+          if (
+            provider === "reconnect" &&
+            (("id" in message && message.id === 1) || "error" in message)
+          )
+            execWire.push({ direction: "out", message, elapsed: now() - startedAt });
           if ("method" in message && message.method.startsWith("process/"))
             execWire.push({ direction: "out", message });
           return send(message);
         },
         disconnect,
+        owner,
       );
+      detach ??= () => {
+        if (!disconnectExec) return;
+        outage = true;
+        execWire.push({ direction: "detached", elapsed: now() - startedAt });
+        connection.disconnect(1011, "Fixture host transport outage");
+      };
       return {
         get closed() {
           return connection.closed;
@@ -130,6 +157,15 @@ export class Host extends DurableObject<Env> {
         disconnect: connection.disconnect,
         receive(text) {
           const message = JSON.parse(text);
+          if (provider === "reconnect") {
+            if (message.method === "initialize")
+              execWire.push({ direction: "in", message, elapsed: now() - startedAt });
+            // Keep recovery offline until Codex gives up; its next fresh connection can reach the host.
+            if (outage && message.method === "initialize" && message.params?.resumeSessionId) {
+              connection.disconnect(1011, "Fixture host transport outage");
+              return Promise.resolve();
+            }
+          }
           if (typeof message.method === "string" && message.method.startsWith("process/"))
             execWire.push({ direction: "in", message });
           return connection.receive(text);
@@ -160,7 +196,7 @@ export class Host extends DurableObject<Env> {
           lifecycle: lifecycle.filter((event) => event.tool_call_id === item.call_id),
         });
       }
-    });
+    }, provider !== "reconnect");
     const auth =
       provider === "auth-default" || provider === "auth-openai"
         ? await authenticatedGateway()
@@ -264,7 +300,12 @@ export class Host extends DurableObject<Env> {
       } satisfies CodexHarnessProcessOptions;
       if (fresh) {
         result = {
-          ...(await freshThread(processOptions, auth?.secret)),
+          ...(await freshThread(
+            processOptions,
+            provider === "reconnect" ? "reconnect-test" : auth?.secret,
+            provider === "reconnect" ? { beforeFirstTurn: () => detach?.() } : undefined,
+          )),
+          ...(provider === "reconnect" ? { execWire, finishedAtMs: now() - startedAt } : {}),
           authentication:
             auth === undefined
               ? null
@@ -346,20 +387,23 @@ export default {
         await env.HOST.getByName(new URL(request.url).pathname).run(
           new URL(request.url).pathname === "/search"
             ? "search"
-            : new URL(request.url).pathname === "/fresh-default" ||
-                new URL(request.url).pathname === "/fresh"
-              ? "default"
-              : new URL(request.url).pathname === "/fresh-openai"
-                ? "openai"
-                : new URL(request.url).pathname === "/fresh-dotted"
-                  ? "dotted"
-                  : new URL(request.url).pathname === "/fresh-flat"
-                    ? "flat"
-                    : new URL(request.url).pathname === "/auth-default"
-                      ? "auth-default"
-                      : new URL(request.url).pathname === "/auth-openai"
-                        ? "auth-openai"
-                        : undefined,
+            : ["/reconnect", "/reconnect-control"].includes(new URL(request.url).pathname)
+              ? "reconnect"
+              : new URL(request.url).pathname === "/fresh-default" ||
+                  new URL(request.url).pathname === "/fresh"
+                ? "default"
+                : new URL(request.url).pathname === "/fresh-openai"
+                  ? "openai"
+                  : new URL(request.url).pathname === "/fresh-dotted"
+                    ? "dotted"
+                    : new URL(request.url).pathname === "/fresh-flat"
+                      ? "flat"
+                      : new URL(request.url).pathname === "/auth-default"
+                        ? "auth-default"
+                        : new URL(request.url).pathname === "/auth-openai"
+                          ? "auth-openai"
+                          : undefined,
+          new URL(request.url).pathname === "/reconnect",
         ),
       );
     } catch (error) {

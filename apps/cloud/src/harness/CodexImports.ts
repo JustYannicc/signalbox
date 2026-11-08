@@ -55,7 +55,7 @@ export async function createCodexImports(input: {
       const { request } = input;
       if (request.url !== options.environment.CODEX_EXEC_SERVER_URL)
         return createKernelWebSocketFetchRoute(options.fetch)(input);
-      const response = acceptCodexExecWebSocket(request, sessions, options.lifetime);
+      const response = acceptCodexExecWebSocket(request, sessions, options.lifetime, parent);
       response.webSocket?.accept();
       return { response, headers: [] };
     },

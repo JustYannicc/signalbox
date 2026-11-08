@@ -31,7 +31,9 @@ async function runProof(
     | "fresh-dotted"
     | "fresh-flat"
     | "auth-default"
-    | "auth-openai",
+    | "auth-openai"
+    | "reconnect"
+    | "reconnect-control",
 ) {
   if (!releaseDir || !programDir)
     throw new Error(
@@ -115,6 +117,36 @@ async function runProof(
 }
 
 describe("official Codex CodeMode through ProductComputer", () => {
+  it.each(["reconnect-control", "reconnect"] as const)(
+    "admits exec sessions through public creation and first turn: %s",
+    async (route) => {
+      const body = await runProof(route);
+      const capacityErrors = body.result.execWire.filter(
+        (entry: { readonly message?: { readonly error?: { readonly message: string } } }) =>
+          entry.message?.error?.message === "Too many exec-server sessions",
+      );
+      expect(capacityErrors).toEqual([]);
+      expect(body.result.completions).toEqual(["completed"]);
+      expect(body.active).toBe(0);
+      expect(body.processes).toBe(0);
+      if (route === "reconnect-control")
+        expect(
+          body.result.execWire.filter(
+            (entry: {
+              readonly direction: string;
+              readonly message?: { readonly method?: string };
+            }) => entry.direction === "in" && entry.message?.method === "initialize",
+          ),
+        ).toHaveLength(1);
+      else {
+        const detached = body.result.execWire.find(
+          (entry: { readonly direction: string }) => entry.direction === "detached",
+        );
+        expect(body.result.finishedAtMs - detached.elapsed).toBeLessThan(30_000);
+      }
+    },
+    120_000,
+  );
   it("spawns the companion natively and executes the recorded exec source through the exec server", async () => {
     const body = await runProof("run");
     expect(body).toMatchObject({

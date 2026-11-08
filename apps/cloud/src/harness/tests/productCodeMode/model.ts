@@ -4,7 +4,10 @@ export const CODE_MODE_SOURCE =
 export const OUTPUT_SOURCE =
   'const r = await tools.exec_command({cmd:"printf code-mode-output","workdir":"/work","yield_time_ms":10000,"max_output_tokens":1000}); text(r.output);';
 
-export function codeModeResponses(observe?: (body: Record<string, unknown>) => void) {
+export function codeModeResponses(
+  observe?: (body: Record<string, unknown>) => void,
+  toolCalls = true,
+) {
   const requests: Record<string, unknown>[] = [];
   return {
     requests,
@@ -14,7 +17,7 @@ export function codeModeResponses(observe?: (body: Record<string, unknown>) => v
       requests.push(body);
       const id = `response-${requests.length}`;
       const item =
-        requests.length === 1
+        toolCalls && requests.length === 1
           ? {
               type: "custom_tool_call",
               id: "item-code-mode",
@@ -22,7 +25,7 @@ export function codeModeResponses(observe?: (body: Record<string, unknown>) => v
               name: "exec",
               input: CODE_MODE_SOURCE,
             }
-          : requests.length === 2
+          : toolCalls && requests.length === 2
             ? {
                 type: "custom_tool_call",
                 id: "item-output",
