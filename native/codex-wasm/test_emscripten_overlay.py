@@ -7,6 +7,8 @@ import tempfile
 import tomllib
 import unittest
 
+from unittest.mock import patch
+from test_overlay import fixture_hashes
 import overlay
 
 
@@ -22,6 +24,11 @@ class EmscriptenOverlayTests(unittest.TestCase):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("\n".join(overlay._text(rule, "before") for rule in rules))
+        self.official_hashes = overlay._source_hashes('wasm32-unknown-emscripten')
+        self.hashes = patch.object(overlay, '_source_hashes', return_value=fixture_hashes(
+            self.root, overlay._target_rules('wasm32-unknown-emscripten')))
+        self.hashes.start()
+        self.addCleanup(self.hashes.stop)
 
     def apply(self):
         return overlay.apply_overlay(self.root, "wasm32-unknown-emscripten")
@@ -57,12 +64,13 @@ class EmscriptenOverlayTests(unittest.TestCase):
             self.apply()
         self.assertEqual(self.snapshot(), before)
 
-    def test_whitespace_and_comments_preserve_unrelated_source(self):
+    def test_whitespace_and_comments_fail_before_any_write(self):
         path = self.root / "codex-rs/http-client/src/route_aware_client_pool.rs"
-        path.write_text(path.read_text().replace("while let", "// keep this comment\nwhile   let"))
-        self.apply()
-        self.assertIn("// keep this comment", path.read_text())
-        self.assertEqual(self.apply(), [])
+        path.write_text(path.read_text().replace("while let", "// drift\nwhile   let"))
+        before = self.snapshot()
+        with self.assertRaisesRegex(overlay.OverlayError, "expected source sha256"):
+            self.apply()
+        self.assertEqual(self.snapshot(), before)
 
     def test_unknown_source_shape_cannot_partially_change_the_manifest(self):
         path = self.root / "codex-rs/http-client/src/route_aware_client_pool.rs"
@@ -76,7 +84,7 @@ class EmscriptenOverlayTests(unittest.TestCase):
         path = self.root / "codex-rs/http-client/src/route_aware_client_pool.rs"
         path.write_text(path.read_text() + '\n#[cfg(target_os = "emscripten")] fn unknown() {}\n')
         before = self.snapshot()
-        with self.assertRaisesRegex(overlay.OverlayError, "unrecognized emscripten"):
+        with self.assertRaisesRegex(overlay.OverlayError, "#1072"):
             self.apply()
         self.assertEqual(self.snapshot(), before)
 
@@ -93,6 +101,7 @@ class EmscriptenOverlayTests(unittest.TestCase):
         source = Path(os.environ["CODEX_OVERLAY_TEST_SOURCE"])
         for relative in self.snapshot():
             shutil.copy2(source / relative, self.root / relative)
+        self.hashes.stop()
         changes = self.apply()
         self.assertEqual(len(changes), 9)
         self.assertEqual(self.apply(), [])

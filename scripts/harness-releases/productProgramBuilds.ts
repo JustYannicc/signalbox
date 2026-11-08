@@ -2,6 +2,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { downloadRelease } from "@signalbox/cloud/infra/releaseDownload";
 import {
   applyGitTemplateSubstitutions,
   mountAospkgTar,
@@ -26,20 +27,13 @@ export async function fetchJq(
   output: string,
   work: string,
   pins: ProductProgramPinSnapshot,
+  token?: string,
 ) {
-  const releaseManifestResponse = await fetchAsset(pins.jqPackage.registryManifestUrl, {
-    signal: AbortSignal.timeout(120_000),
-  });
-  if (!releaseManifestResponse.ok)
-    throw new Error(`PRODUCT_PROGRAM_JQ_REGISTRY_FAILED:${releaseManifestResponse.status}`);
-  requireHttps(
-    releaseManifestResponse.url || pins.jqPackage.registryManifestUrl,
-    "jq:registry-manifest",
-  );
-  const manifestBytes = await readResponseBytes(
-    releaseManifestResponse,
-    1_048_576,
-    "jq:registry-manifest",
+  requireHttps(pins.jqPackage.registryManifestUrl, "jq:registry-manifest");
+  const manifestBytes = await downloadRelease(
+    pins.jqPackage.registryManifestUrl,
+    (response) => readResponseBytes(response, 1_048_576, "jq:registry-manifest"),
+    { fetch: fetchAsset, token, failurePrefix: "PRODUCT_PROGRAM_JQ_REGISTRY_FAILED" },
   );
   const registryManifest = parseRegistryManifest(manifestBytes, pins.jqPackage);
   const packageBytes = await fetchPinned(
@@ -50,6 +44,7 @@ export async function fetchJq(
       sha256: pins.jqPackage.packageSha256,
     },
     "jq:package",
+    token,
   );
   const mountTar = mountAospkgTar(packageBytes);
   const archivePath = NodePath.join(work, "jq-package.tar");

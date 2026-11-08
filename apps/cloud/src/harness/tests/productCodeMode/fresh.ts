@@ -1,3 +1,4 @@
+import { createNodeFs } from "../../../isolate/NodeFs.ts";
 import {
   CodexSettings,
   ProviderDriverKind,
@@ -23,7 +24,16 @@ import type { CodexHarnessProcessOptions } from "../../CodexHarnessProcess.ts";
 import { dataForDriver } from "../../adapter/tests/data.ts";
 
 const decodeSettings = Schema.decodeEffect(CodexSettings);
+const decodeThread = Schema.decodeUnknownEffect(
+  Schema.Struct({ id: Schema.String, path: Schema.String }),
+);
+const decodeMeta = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 export async function freshThread(process: CodexHarnessProcessOptions, secret?: string) {
+  const fs = createNodeFs(process.computer.files).fs;
+  const home = process.bootstrap.codex_home;
+  fs.mkdirSync(`${home}/sessions`, { recursive: true });
+  fs.writeFileSync(`${home}/sessions/unrelated.jsonl`, "{}\n");
   const stderr: string[] = [];
   const input: string[] = [];
   const decoder = new TextDecoder();
@@ -78,18 +88,31 @@ export async function freshThread(process: CodexHarnessProcessOptions, secret?: 
           session,
           computer: process.computer,
           modelTransport: process.fetch,
+          creation: { providerThread },
         });
         const thread = yield* runtime.ensureThread({
           ...session,
           existingProviderThread: providerThread,
         });
+        const snapshot = yield* runtime.readThreadSnapshot({ providerThread: thread });
+        const native = yield* decodeThread(snapshot.providerPayload);
+        const persisted = fs.readFileSync(native.path, "utf8");
+        if (typeof persisted !== "string") throw new Error("Fresh rollout is not text");
+        const sessionMeta = yield* decodeMeta(persisted.split("\n")[0]!);
         const completions: string[] = [];
         if (secret !== undefined) {
+          // Checkpoint preparation unloads the thread; the product host resumes it for a turn.
+          const resumed = yield* runtime.resumeThread({
+            providerThread: thread,
+            threadId: session.threadId,
+            modelSelection: session.modelSelection,
+            runtimePolicy: session.runtimePolicy,
+          });
           for (const ordinal of [1, 2]) {
             yield* runtime.startTurn({
               rootNodeId: data.turn.rootNodeId,
               threadId: session.threadId,
-              providerThread: thread,
+              providerThread: resumed,
               runtimePolicy: session.runtimePolicy,
               runId: RunId.make(`auth-${ordinal}`),
               attemptId: RunAttemptId.make(`auth-${ordinal}`),
@@ -101,7 +124,7 @@ export async function freshThread(process: CodexHarnessProcessOptions, secret?: 
                 id: session.threadId,
                 providerInstanceId: session.modelSelection.instanceId,
                 modelSelection: session.modelSelection,
-                activeProviderThreadId: thread.id,
+                activeProviderThreadId: resumed.id,
                 lineage: { ...data.turn.appThread.lineage, rootThreadId: session.threadId },
               },
               message: {
@@ -121,6 +144,8 @@ export async function freshThread(process: CodexHarnessProcessOptions, secret?: 
         }
         return {
           completions,
+          snapshot: snapshot.providerPayload,
+          sessionMeta,
           input: input.join(""),
           nativeId: thread.nativeThreadRef?.nativeId,
           stderr,

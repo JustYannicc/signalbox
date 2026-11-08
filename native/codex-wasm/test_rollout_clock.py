@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import overlay
+from test_overlay import fixture_hashes
 
 
 class RolloutClockTests(unittest.TestCase):
@@ -23,6 +24,9 @@ class RolloutClockTests(unittest.TestCase):
         mocked = patch.object(overlay, '_rules', return_value=[self.rule])
         mocked.start()
         self.addCleanup(mocked.stop)
+        hashes = patch.object(overlay, "_source_hashes", return_value=fixture_hashes(self.root, [self.rule]))
+        hashes.start()
+        self.addCleanup(hashes.stop)
 
     def test_preserves_native_error_handling_and_surrounding_path_logic(self):
         changes = overlay.apply_overlay(self.root, 'wasm32-wasip1')
@@ -44,7 +48,7 @@ class RolloutClockTests(unittest.TestCase):
 
     def test_unsupported_target_leaves_original_clock_unchanged(self):
         with self.assertRaisesRegex(overlay.OverlayError, 'unsupported overlay target'):
-            overlay.apply_overlay(self.root, 'wasm32-unknown-emscripten')
+            overlay.apply_overlay(self.root, 'x86_64-unknown-linux-gnu')
         self.assertEqual(self.path.read_text(), self.source)
 
 

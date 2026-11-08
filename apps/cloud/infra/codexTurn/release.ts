@@ -2,19 +2,20 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { downloadRelease } from "../releaseDownload.ts";
 
 // The unchanged builder at this commit reproduced all four files byte for byte.
 export const CODEX_WASI_RELEASE = {
-  sourceCommit: "2e4a89f3af2716d99ae428343a91acfa72736eb7",
-  url: "https://github.com/JustYannicc/signalbox/releases/download/kernel-programs-20261108-codex-33e30977",
+  sourceCommit: "c02661ec15b934ca8a0e8b8e201cb2b1ba555863",
+  url: "https://github.com/JustYannicc/signalbox/releases/download/kernel-programs-20261108-codex-6169cddc",
   files: {
     "manifest.json": {
       bytes: 10_634,
-      sha256: "1c1c196bf0f785364c28e7768e067463f636f3b9133585d8f26a5f100e911b45",
+      sha256: "6c3ffd18187c2ff8ba3dfb63ce73a9e0c23f4f4c644004c688f0366008e10816",
     },
     "engine.wasm": {
-      bytes: 58_834_333,
-      sha256: "33e309776dab6211906ad77f68798ec95c0a17387f5fabe172b5992b35b23540",
+      bytes: 58_788_193,
+      sha256: "6169cddc2b5fe329d9bc85f932f9126fea920978b9962e50e4a230216f84365c",
     },
     "loader.mjs": {
       bytes: 1_907,
@@ -30,16 +31,15 @@ export const CODEX_WASI_RELEASE = {
 /** Creates a fresh release directory only after every downloaded file matches its pin. */
 export async function fetchCodexRelease(
   output: string,
-  options: { readonly fetch?: typeof fetch } = {},
+  options: { readonly fetch?: typeof fetch; readonly token?: string | undefined } = {},
 ) {
-  const fetchAsset = options.fetch ?? fetch;
   const files = await Promise.all(
     Object.entries(CODEX_WASI_RELEASE.files).map(async ([name, pin]) => {
-      const response = await fetchAsset(`${CODEX_WASI_RELEASE.url}/${name}`, {
-        signal: AbortSignal.timeout(120_000),
-      });
-      if (!response.ok) throw new Error(`CODEX_RELEASE_DOWNLOAD_FAILED:${name}:${response.status}`);
-      const bytes = new Uint8Array(await response.arrayBuffer());
+      const bytes = await downloadRelease(
+        `${CODEX_WASI_RELEASE.url}/${name}`,
+        async (response) => new Uint8Array(await response.arrayBuffer()),
+        { ...options, failurePrefix: `CODEX_RELEASE_DOWNLOAD_FAILED:${name}` },
+      );
       const sha256 = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
       if (bytes.byteLength !== pin.bytes || sha256 !== pin.sha256)
         throw new Error(`CODEX_RELEASE_INPUT_MISMATCH:${name}`);

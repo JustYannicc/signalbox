@@ -6,7 +6,9 @@ checkout is hashed before and after every build. Builds never run inside it.
 
 Codex currently has missing WASI platform arms. The wrapper exports a separate
 compile copy and matches those arms by tokens, ignoring comments and whitespace.
-Unknown or ambiguous structures fail before any source is written. A release that
+Every overlaid official file requires complete upstream and patched hashes for each target, so even
+unanchored source drift or a missing hash fails before any source is written. Unknown or ambiguous
+structures fail the same way. A release that
 needs a compatibility-rule change counts as needing an edit in #1072. Existing
 supported arms need no overlay. These rules stay in the wrapper until upstream
 ships equivalent support. The first contribution is tracked at
@@ -69,7 +71,7 @@ resume, tools, MCP and interruption belong to #1069 and the #1072 release replay
 
 The hooks packager and native ProductComputer CodeMode test share the release pin in
 [`release.ts`](../../apps/cloud/infra/codexTurn/release.ts). The public artifact comes from
-[`kernel-programs-20261108-codex-33e30977`](https://github.com/JustYannicc/signalbox/releases/tag/kernel-programs-20261108-codex-33e30977).
+[`kernel-programs-20261108-codex-6169cddc`](https://github.com/JustYannicc/signalbox/releases/tag/kernel-programs-20261108-codex-6169cddc).
 Its notes record the source, builder, toolchain and manifest hash. The downloader verifies
 the size and SHA-256 of the manifest, engine, loader and Cargo.lock.
 
@@ -89,3 +91,12 @@ Signalbox CI fetches and caches these same inputs, then runs this test once in `
 before the ordinary cloud shards. The test fails when either input is missing or its
 artifact pins disagree. Its bootstrap enables `host_capabilities.standard_form_input`,
 so an engine that rejects the current protocol cannot pass the native turn.
+
+The native proof covers public fresh-thread creation with an existing sessions directory,
+checkpoint persistence and metadata-only reads before any model request. File-search
+matching, cancellation and query replacement run in a separate native Computer so their
+configuration discovery cannot occupy the CodeMode turn's exec-server session. WASI file-search uses a serial walker and
+the same fuzzy matcher because this target cannot create worker threads; each query walks
+again in batches of 256 entries, yielding to cancellation and other RPCs between
+batches. Result cutoffs retain Nucleo's score, path-length and insertion ordering.
+Native platforms retain the upstream workers.

@@ -1,5 +1,6 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { downloadRelease } from "@signalbox/cloud/infra/releaseDownload";
 import { sha256, verifyPinnedBytes, writePinnedTarFiles } from "./productProgramArchive.ts";
 import { writeOnce } from "./productProgramRuntime.ts";
 import type {
@@ -61,12 +62,18 @@ export async function fetchPinned(
   fetchAsset: typeof fetch,
   pin: { readonly url: string; readonly bytes: number; readonly sha256: string },
   label: string,
+  token?: string,
 ): Promise<Uint8Array> {
   requireHttps(pin.url, label);
-  const response = await fetchAsset(pin.url, { signal: AbortSignal.timeout(120_000) });
-  if (!response.ok) throw new Error(`PRODUCT_PROGRAM_DOWNLOAD_FAILED:${label}:${response.status}`);
-  requireHttps(response.url || pin.url, label);
-  const bytes = await readResponseBytes(response, pin.bytes, label);
+  const bytes = await downloadRelease(
+    pin.url,
+    (response) => readResponseBytes(response, pin.bytes, label),
+    {
+      fetch: fetchAsset,
+      token,
+      failurePrefix: `PRODUCT_PROGRAM_DOWNLOAD_FAILED:${label}`,
+    },
+  );
   verifyPinnedBytes(bytes, pin, label);
   return bytes;
 }
@@ -156,6 +163,7 @@ export async function downloadPublishedPrograms(
   output: string,
   manifests: readonly ProgramManifest[],
   pins: ProductProgramPinSnapshot,
+  token?: string,
 ) {
   const archives = new Map<string, string>();
   const receipts = [];
@@ -175,7 +183,7 @@ export async function downloadPublishedPrograms(
     ) {
       throw new Error(`PRODUCT_PROGRAM_PROVENANCE_URL_DRIFT:${source.name}`);
     }
-    const bytes = await fetchPinned(fetchAsset, entry, source.name);
+    const bytes = await fetchPinned(fetchAsset, entry, source.name, token);
     const outputs =
       source.name === "coreutils"
         ? Object.values(pins.coreutils.commands).map(({ file, bytes, sha256 }) => ({
@@ -192,7 +200,12 @@ export async function downloadPublishedPrograms(
       await writeOnce(NodePath.join(output, source.output), bytes);
     }
     if (!entry.provenance) throw new Error(`PRODUCT_PROGRAM_PROVENANCE_MISSING:${source.name}`);
-    const provenance = await fetchPinned(fetchAsset, entry.provenance, `${source.name}:provenance`);
+    const provenance = await fetchPinned(
+      fetchAsset,
+      entry.provenance,
+      `${source.name}:provenance`,
+      token,
+    );
     if (
       source.name === "coreutils" &&
       (provenance.byteLength !== pins.coreutilsProvenance.bytes ||

@@ -1,3 +1,4 @@
+import { fileSearchProof } from "./cancellation.ts";
 import ENGINE from "./codex-engine.wasm";
 import { CodexExecSessions } from "../../../kernel/CodexExecSessions.ts";
 import { DurableObject } from "cloudflare:workers";
@@ -38,8 +39,10 @@ interface Env {
 }
 
 export class Host extends DurableObject<Env> {
-  async run(provider?: "default" | "openai" | "dotted" | "flat" | "auth-default" | "auth-openai") {
-    const fresh = provider !== undefined;
+  async run(
+    provider?: "search" | "default" | "openai" | "dotted" | "flat" | "auth-default" | "auth-openai",
+  ) {
+    const fresh = provider !== undefined && provider !== "search";
     const wakes = new KernelWakeRegistry();
     const controller = new AbortController();
     const stdio = createKernelSessionStdio(wakes, controller.signal);
@@ -278,39 +281,46 @@ export class Host extends DurableObject<Env> {
         const process = await startCodexHarnessProcess(processOptions);
         driver = appServerDriver(process);
         await process.ready;
-        const started = await driver.request("thread/start", {
-          cwd: "/work",
-          model: "gpt-5.5",
-          modelProvider: "fixture",
-          approvalPolicy: "never",
-          sandbox: "danger-full-access",
-        });
-        const threadId = started.thread?.id;
-        if (threadId === undefined) throw new Error("Official engine did not start a thread");
-        await driver.request("turn/start", {
-          threadId,
-          input: [{ type: "text", text: "Create docs/routines/evening through exec." }],
-          cwd: "/work",
-          model: "gpt-5.5",
-          approvalPolicy: "never",
-          sandboxPolicy: { type: "dangerFullAccess" },
-        });
-        const completed = await driver.completed;
-        result = {
-          completed,
-          nativeSpawns,
-          execCalls,
-          machineCalls,
-          cellTools,
-          lifecycle,
-          resultObservations,
-          execWire,
-          modelRequests: model.requests,
-          frames: driver.frames,
-          stderr: driver.errors.join(""),
-          directory: files.stat("/work/docs/routines/evening").type,
-          companionManifest: computer.host.resolve(CODE_MODE_HOST_EXECUTABLE),
-        };
+        if (provider === "search") {
+          result = {
+            ...(await fileSearchProof(files, storage, driver)),
+            modelRequests: model.requests,
+          };
+        } else {
+          const started = await driver.request("thread/start", {
+            cwd: "/work",
+            model: "gpt-5.5",
+            modelProvider: "fixture",
+            approvalPolicy: "never",
+            sandbox: "danger-full-access",
+          });
+          const threadId = started.thread?.id;
+          if (threadId === undefined) throw new Error("Official engine did not start a thread");
+          await driver.request("turn/start", {
+            threadId,
+            input: [{ type: "text", text: "Create docs/routines/evening through exec." }],
+            cwd: "/work",
+            model: "gpt-5.5",
+            approvalPolicy: "never",
+            sandboxPolicy: { type: "dangerFullAccess" },
+          });
+          const completed = await driver.completed;
+          result = {
+            completed,
+            nativeSpawns,
+            execCalls,
+            machineCalls,
+            cellTools,
+            lifecycle,
+            resultObservations,
+            execWire,
+            modelRequests: model.requests,
+            frames: driver.frames,
+            stderr: driver.errors.join(""),
+            directory: files.stat("/work/docs/routines/evening").type,
+            companionManifest: computer.host.resolve(CODE_MODE_HOST_EXECUTABLE),
+          };
+        }
       }
     } catch (error) {
       throw new Error(
@@ -333,20 +343,23 @@ export default {
   async fetch(request: Request, env: Env) {
     try {
       return Response.json(
-        await env.HOST.getByName("proof").run(
-          new URL(request.url).pathname === "/fresh-default"
-            ? "default"
-            : new URL(request.url).pathname === "/fresh-openai"
-              ? "openai"
-              : new URL(request.url).pathname === "/fresh-dotted"
-                ? "dotted"
-                : new URL(request.url).pathname === "/fresh-flat"
-                  ? "flat"
-                  : new URL(request.url).pathname === "/auth-default"
-                    ? "auth-default"
-                    : new URL(request.url).pathname === "/auth-openai"
-                      ? "auth-openai"
-                      : undefined,
+        await env.HOST.getByName(new URL(request.url).pathname).run(
+          new URL(request.url).pathname === "/search"
+            ? "search"
+            : new URL(request.url).pathname === "/fresh-default" ||
+                new URL(request.url).pathname === "/fresh"
+              ? "default"
+              : new URL(request.url).pathname === "/fresh-openai"
+                ? "openai"
+                : new URL(request.url).pathname === "/fresh-dotted"
+                  ? "dotted"
+                  : new URL(request.url).pathname === "/fresh-flat"
+                    ? "flat"
+                    : new URL(request.url).pathname === "/auth-default"
+                      ? "auth-default"
+                      : new URL(request.url).pathname === "/auth-openai"
+                        ? "auth-openai"
+                        : undefined,
         ),
       );
     } catch (error) {

@@ -7,6 +7,7 @@ CLI replacement is included. Unknown source shapes require a rule edit (#1072).
 """
 
 import difflib
+import hashlib
 import json
 from pathlib import Path
 from typing import NoReturn
@@ -20,6 +21,10 @@ class OverlayError(ValueError):
 
 _RULES = Path(__file__).parent / "compatibility"
 _TARGETS = {"wasm32-wasip1", "wasm32-unknown-emscripten"}
+
+
+def _source_hashes(target: str) -> dict:
+    return json.loads(Path(__file__).with_name("source-hashes.json").read_text()).get(target, {})
 
 
 def _rules() -> list[dict]:
@@ -141,6 +146,7 @@ def apply_overlay(root: Path, target: str) -> list[dict]:
     platform = "emscripten" if target == "wasm32-unknown-emscripten" else "wasi"
     for rule in _target_rules(target):
         grouped.setdefault(rule["path"], []).append(rule)
+    hashes = _source_hashes(target)
     pending = []
     changes = []
     for relative, rules in grouped.items():
@@ -161,12 +167,22 @@ def apply_overlay(root: Path, target: str) -> list[dict]:
             if not path.is_file():
                 _shape(rules[0], "missing source file")
             original = path.read_text()
+            guard = hashes.get(relative)
+            if guard is None or any(not isinstance(guard.get(key), str) or len(guard[key]) != 64
+                                    or any(c not in "0123456789abcdef" for c in guard[key])
+                                    for key in ("source_sha256", "patched_sha256")):
+                _shape(rules[0], "missing or invalid expected source sha256 entry")
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            if digest not in {guard["source_sha256"], guard["patched_sha256"]}:
+                _shape(rules[0], f"expected source sha256 {guard['source_sha256']}, found {digest}")
             try:
                 matches = _validate(original, rules, platform)
                 output = original
                 applied = [rule for rule, done, _, _ in matches if not done]
                 for rule in applied:
                     output = _replace(output, rule)
+                if hashlib.sha256(output.encode()).hexdigest() != guard["patched_sha256"]:
+                    _shape(rules[0], "patched source sha256 differs")
                 if not all(done for _, done, _, _ in _validate(output, rules, platform)):
                     _shape(rules[0], "overlay did not produce the expected structures")
             except ValueError as error:

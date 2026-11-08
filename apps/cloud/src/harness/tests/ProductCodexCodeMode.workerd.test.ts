@@ -24,6 +24,8 @@ const ENGINE_SHA256 = CODEX_WASI_RELEASE.files["engine.wasm"].sha256;
 async function runProof(
   route:
     | "run"
+    | "search"
+    | "fresh"
     | "fresh-default"
     | "fresh-openai"
     | "fresh-dotted"
@@ -80,6 +82,7 @@ async function runProof(
     await NodeFSP.writeFile(main, built.outputFiles[0]!.text);
     await NodeFSP.writeFile(NodePath.join(staging, "codex-engine.wasm"), engine);
     harness = createTestHarness({
+      root: staging,
       workers: [
         {
           config: {
@@ -197,6 +200,30 @@ describe("official Codex CodeMode through ProductComputer", () => {
       ).toEqual(lifecycle);
     }
   }, 120_000);
+  it("matches, cancels and replaces file searches in its own native computer without model requests", async () => {
+    const body = await runProof("search");
+    expect(body).toMatchObject({ active: 0, processes: 0, result: { modelRequests: [] } });
+    expect(body.result.fuzzy.files).toContainEqual(
+      expect.objectContaining({
+        path: "evening-routine.md",
+        indices: [0, 1, 8, 11],
+        score: expect.any(Number),
+      }),
+    );
+    expect(body.result.cancelledSearch.directoriesRead).toBeGreaterThan(0);
+    expect(body.result.cancelledSearch.directoriesRead).toBeLessThan(
+      body.result.cancelledSearch.totalDirectories,
+    );
+    expect(body.result.cancelledSearch.directoriesRead).toBe(body.result.cancelledSearch.atStop);
+    const searchEvents = body.result.replacedSearch.events;
+    const completions = searchEvents.filter(
+      (event: { method: string }) => event.method === "fuzzyFileSearch/sessionCompleted",
+    );
+    expect(completions).toHaveLength(1);
+    expect(searchEvents.at(-1)?.method).toBe("fuzzyFileSearch/sessionCompleted");
+    expect(searchEvents.at(-2)?.query).toBe("009");
+    expect(searchEvents[0]?.query).toBe("directory");
+  }, 120_000);
   it.each(["fresh-default", "fresh-openai", "fresh-dotted", "fresh-flat"] as const)(
     "starts %s without a model prewarm request",
     async (route) => {
@@ -256,4 +283,28 @@ describe("official Codex CodeMode through ProductComputer", () => {
     },
     120_000,
   );
+  it("creates and checkpoints a fresh thread with an existing sessions directory before any model request", async () => {
+    const body = await runProof("fresh");
+    expect(body).toMatchObject({
+      active: 0,
+      processes: 0,
+      result: {
+        modelRequests: [],
+        snapshot: { ephemeral: false, turns: [] },
+        sessionMeta: { type: "session_meta" },
+      },
+    });
+    const reads = body.result.input
+      .trim()
+      .split("\n")
+      .map((line: string) => JSON.parse(line))
+      .filter((frame: { method?: string }) => frame.method === "thread/read");
+    expect(reads.length).toBeGreaterThanOrEqual(2);
+    for (const read of reads)
+      expect(read.params).toEqual({ threadId: body.result.nativeId, includeTurns: false });
+    expect(body.result.snapshot.id).toBe(body.result.nativeId);
+    expect(body.result.sessionMeta.payload.id).toBe(body.result.nativeId);
+    expect(body.result.snapshot.path).toMatch(/^\/home\/codex\/\.codex\/sessions\//);
+    expect(body.result.stderr.join("")).not.toMatch(/panicked|unreachable|WouldBlock/);
+  }, 120_000);
 });
