@@ -25,7 +25,7 @@ import {
 import { CODE_MODE_HOST_EXECUTABLE } from "../../CodeModeHost.ts";
 import type { KernelCommand } from "../../../kernel/KernelCommandForwarder.ts";
 import { appServerDriver } from "./driver.ts";
-import { codeModeResponses } from "./model.ts";
+import { codeModeResponses, SYMLINK_CODE_MODE_SOURCE } from "./model.ts";
 import { authenticatedGateway } from "./authenticated.ts";
 import { createNodeFs } from "../../../isolate/NodeFs.ts";
 import { freshThread } from "./fresh.ts";
@@ -51,6 +51,7 @@ export class Host extends DurableObject<Env> {
       | "auth-openai"
       | "reconnect",
     disconnectExec = false,
+    symlinkCwd = false,
   ) {
     const fresh = provider !== undefined && provider !== "search";
     const wakes = new KernelWakeRegistry();
@@ -65,6 +66,7 @@ export class Host extends DurableObject<Env> {
     });
     for (const path of ["/work", "/tmp", "/home", "/home/codex"]) files.mkdir(path);
     files.chdir("/work");
+    if (symlinkCwd) files.symlink("/work", "/alias");
     const asset = (hash: string) =>
       Uint8Array.from(atob(this.env.ASSETS[hash]!), (char) => char.charCodeAt(0));
     writeSeedFiles(
@@ -212,27 +214,31 @@ export class Host extends DurableObject<Env> {
       tool_call_id: string;
       lifecycle: CodeModeLifecycleEvent[];
     }[] = [];
-    const model = codeModeResponses((body) => {
-      if (!Array.isArray(body.input)) return;
-      const input: readonly unknown[] = body.input;
-      for (const item of input) {
-        if (
-          typeof item !== "object" ||
-          item === null ||
-          !("type" in item) ||
-          !("call_id" in item) ||
-          item.type !== "custom_tool_call_output" ||
-          typeof item.call_id !== "string" ||
-          resultObservations.some((result) => result.tool_call_id === item.call_id)
-        )
-          continue;
-        // Snapshot at the engine's first delivery of this result, before any teardown.
-        resultObservations.push({
-          tool_call_id: item.call_id,
-          lifecycle: lifecycle.filter((event) => event.tool_call_id === item.call_id),
-        });
-      }
-    }, provider !== "reconnect");
+    const model = codeModeResponses(
+      (body) => {
+        if (!Array.isArray(body.input)) return;
+        const input: readonly unknown[] = body.input;
+        for (const item of input) {
+          if (
+            typeof item !== "object" ||
+            item === null ||
+            !("type" in item) ||
+            !("call_id" in item) ||
+            item.type !== "custom_tool_call_output" ||
+            typeof item.call_id !== "string" ||
+            resultObservations.some((result) => result.tool_call_id === item.call_id)
+          )
+            continue;
+          // Snapshot at the engine's first delivery of this result, before any teardown.
+          resultObservations.push({
+            tool_call_id: item.call_id,
+            lifecycle: lifecycle.filter((event) => event.tool_call_id === item.call_id),
+          });
+        }
+      },
+      provider !== "reconnect",
+      symlinkCwd ? SYMLINK_CODE_MODE_SOURCE : undefined,
+    );
     const auth =
       provider === "auth-default" || provider === "auth-openai"
         ? await authenticatedGateway()
@@ -440,6 +446,7 @@ export default {
                           ? "auth-openai"
                           : undefined,
           new URL(request.url).pathname === "/reconnect",
+          new URL(request.url).pathname === "/symlink-cwd",
         ),
       );
     } catch (error) {

@@ -25,6 +25,7 @@ const ENGINE_SHA256 = CODEX_WASI_RELEASE.files["engine.wasm"].sha256;
 async function runProof(
   route:
     | "run"
+    | "symlink-cwd"
     | "search"
     | "fresh"
     | "fresh-default"
@@ -119,6 +120,24 @@ async function runProof(
 }
 
 describe("official Codex CodeMode through ProductComputer", () => {
+  it("executes CodeMode tools.exec_command with a symlink workdir and a canonical child cwd", async () => {
+    const body = await runProof("symlink-cwd");
+    expect(body).toMatchObject({
+      active: 0,
+      processes: 0,
+      result: {
+        completed: { method: "turn/completed", params: { turn: { status: "completed" } } },
+        directory: "directory",
+        machineCalls: [],
+      },
+    });
+    expect(body.result.execCalls[0]).toMatchObject({ cwd: "/alias" });
+    const output = body.result.modelRequests[1].input.find(
+      (item: { call_id?: string }) => item.call_id === "call-code-mode" && "output" in item,
+    );
+    expect(JSON.stringify(output)).toContain("Script completed");
+    expect(JSON.stringify(output)).toContain("/work\\n");
+  }, 120_000);
   it.each(["reconnect-control", "reconnect"] as const)(
     "admits exec sessions through public creation and first turn: %s",
     async (route) => {

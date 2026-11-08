@@ -352,10 +352,7 @@ describe("createComputerCommands", () => {
     expect(machine.spawn).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["relative", "workspace"],
-    ["absolute but noncanonical", "/workspace/.."],
-  ])("rejects %s cwd on both command entry points", async (_kind, cwd) => {
+  it("rejects relative cwd on both command entry points", async () => {
     let localRuns = 0;
     const evidence = vi.fn(async () => ({ workspaceBytes: 100 }));
     const { context, commands, machine } = computerHarness(
@@ -369,7 +366,7 @@ describe("createComputerCommands", () => {
       },
     );
     context.filesystem.mkdir("/workspace");
-    const command = probeCommand(cwd);
+    const command = probeCommand("workspace");
     const signal = new AbortController().signal;
     await expect(
       Promise.resolve().then(() => commands.exec(command, signal, undefined)),
