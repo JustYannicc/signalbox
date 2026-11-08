@@ -1,4 +1,5 @@
 import { makeSecretScrubber, type SecretValue } from "@signalbox/runner-protocol/SecretScrubber";
+import { isWebSocketHandshake } from "./gateway/http.ts";
 
 /**
  * A model request with the turn's secrets scrubbed from its body (#591,
@@ -32,7 +33,7 @@ export function scrubModelRequest(
 ): ScrubbedRequest {
   const scrubber = makeSecretScrubber(secrets);
   if (scrubber.empty) return { _tag: "scrubbed", request };
-  if (request.headers.has("upgrade")) {
+  if (isWebSocketHandshake(request)) {
     return refused("The ModelGateway can't hide this folder's secrets over a WebSocket. Use HTTP.");
   }
   if (request.body === null) return { _tag: "scrubbed", request };

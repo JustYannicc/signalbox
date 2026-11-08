@@ -36,7 +36,8 @@ interface Env {
 }
 
 export class Host extends DurableObject<Env> {
-  async run(fresh = false) {
+  async run(provider?: "default" | "openai" | "dotted") {
+    const fresh = provider !== undefined;
     const wakes = new KernelWakeRegistry();
     const controller = new AbortController();
     const stdio = createKernelSessionStdio(wakes, controller.signal);
@@ -194,16 +195,24 @@ export class Host extends DurableObject<Env> {
             "analytics.enabled": false,
             "feedback.enabled": false,
             model: "gpt-5.5",
-            model_provider: "fixture",
-            "model_providers.fixture": {
-              name: "Fixture",
-              base_url: "http://model.fixture/v1",
-              wire_api: "responses",
-              requires_openai_auth: false,
-              supports_websockets: fresh,
-              request_max_retries: 0,
-              stream_max_retries: 0,
-            },
+            ...(provider === "default"
+              ? {}
+              : provider === "openai"
+                ? { model_provider: "openai" }
+                : {
+                    model_provider: provider === "dotted" ? "fixture.dot" : "fixture",
+                    model_providers: {
+                      [provider === "dotted" ? "fixture.dot" : "fixture"]: {
+                        name: "Fixture",
+                        base_url: "http://model.fixture/v1",
+                        wire_api: "responses",
+                        requires_openai_auth: false,
+                        supports_websockets: fresh,
+                        request_max_retries: 0,
+                        stream_max_retries: 0,
+                      },
+                    },
+                  }),
             "features.respect_system_proxy": true,
             "features.shell_snapshot": false,
             "features.unified_exec": true,
@@ -299,7 +308,15 @@ export default {
   async fetch(request: Request, env: Env) {
     try {
       return Response.json(
-        await env.HOST.getByName("proof").run(new URL(request.url).pathname === "/fresh"),
+        await env.HOST.getByName("proof").run(
+          new URL(request.url).pathname === "/fresh-default"
+            ? "default"
+            : new URL(request.url).pathname === "/fresh-openai"
+              ? "openai"
+              : new URL(request.url).pathname === "/fresh-dotted"
+                ? "dotted"
+                : undefined,
+        ),
       );
     } catch (error) {
       return Response.json(

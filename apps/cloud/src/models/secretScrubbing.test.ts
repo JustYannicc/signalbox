@@ -80,7 +80,11 @@ const makeGateway = (secrets: ReadonlyArray<SecretValue>, authorization?: ModelA
     const upgrade = () =>
       send(
         new Request("http://gateway.test/openai/v1/responses", {
-          headers: { authorization: `Bearer ${TOKEN}`, upgrade: "websocket" },
+          headers: {
+            authorization: `Bearer ${TOKEN}`,
+            connection: "Upgrade",
+            upgrade: "websocket",
+          },
         }),
       );
     return { call, upgrade, forward, forwarded };
@@ -178,6 +182,19 @@ describe("the ModelGateway with a turn's secrets", () => {
 
       expect(response.status).toBe(200);
       expect(gateway.forwarded.map(({ body }) => body)).toEqual([codexCat(env(FAKE, DB))]);
+    }),
+  );
+
+  it.effect("scrubs a secret-bearing HTTP POST even when it carries Upgrade", () =>
+    Effect.gen(function* () {
+      const value = fake("post-upgrade");
+      const gateway = yield* makeGateway([{ name: "FAKE_SECRET", value }]);
+      const response = yield* gateway.call("/openai/v1/responses", codexCat(value), {
+        connection: "Upgrade",
+        upgrade: "websocket",
+      });
+      expect(response.status).toBe(200);
+      expect(gateway.forwarded.map(({ body }) => body)).toEqual([codexCat(FAKE)]);
     }),
   );
 

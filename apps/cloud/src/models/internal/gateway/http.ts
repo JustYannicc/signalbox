@@ -75,3 +75,16 @@ export function withoutCaller(source: Headers) {
   }
   return headers;
 }
+
+export function isWebSocketHandshake(request: Request) {
+  const hasToken = (header: string, token: string) =>
+    request.headers
+      .get(header)
+      ?.split(",")
+      .some((part) => part.trim().toLowerCase() === token) ?? false;
+  return (
+    request.method === "GET" &&
+    hasToken("connection", "upgrade") &&
+    hasToken("upgrade", "websocket")
+  );
+}

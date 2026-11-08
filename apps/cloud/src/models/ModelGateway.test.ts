@@ -126,6 +126,35 @@ describe("ModelGateway", () => {
     },
   );
 
+  it("forwards an HTTP POST carrying Upgrade instead of treating it as a WebSocket handshake", async () => {
+    const gateway = makeGateway({});
+    const response = await gateway.call("/openai/v1/responses", {
+      method: "POST",
+      headers: { authorization: `Bearer ${LIVE}`, connection: "Upgrade", upgrade: "websocket" },
+      body: JSON.stringify({ model: "fixture", input: "hello" }),
+    });
+    expect(response.status).toBe(200);
+    expect(gateway.forwarded).toHaveLength(1);
+    expect(gateway.forwarded[0]?.request.method).toBe("POST");
+  });
+
+  it.each([undefined, "keep-alive"])(
+    "forwards a GET with Connection %s instead of treating it as a WebSocket handshake",
+    async (connection) => {
+      const gateway = makeGateway({});
+      const response = await gateway.call("/openai/v1/responses", {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${LIVE}`,
+          upgrade: "websocket",
+          ...(connection === undefined ? {} : { connection }),
+        },
+      });
+      expect(response.status).toBe(200);
+      expect(gateway.forwarded).toHaveLength(1);
+    },
+  );
+
   it("serves a local key's request on its pool, recorded for its user rather than a turn", async () => {
     const gateway = makeGateway({ upstream: () => sse(['data: {"type":"message_start"}\n\n']) });
     const response = await gateway.call("/anthropic/v1/messages", {

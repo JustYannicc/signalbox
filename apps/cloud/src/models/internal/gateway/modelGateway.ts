@@ -7,6 +7,7 @@ import { detachRpcData, releaseRpcResult, retainRpcResponse } from "../../../rpc
 import type { ModelServeReply } from "../../ModelProtocol.ts";
 import {
   LOCAL_KEY_HEADER,
+  isWebSocketHandshake,
   bearerOrKey,
   callerHeadersOf,
   errorResponse,
@@ -76,12 +77,7 @@ export async function handleModelRequest(
   if (!SERVED_PATHS[provider].some((served) => path === served || path.startsWith(`${served}/`))) {
     return errorResponse(provider, 404, `The ModelGateway does not serve ${path}.`);
   }
-  if (
-    request.headers
-      .get("upgrade")
-      ?.split(",")
-      .some((protocol) => protocol.trim().toLowerCase() === "websocket")
-  ) {
+  if (isWebSocketHandshake(request)) {
     // Codex needs 426 to fall back to HTTP, where the turn's secrets can be scrubbed.
     return errorResponse(provider, 426, "Model WebSockets are not supported. Use HTTP instead.");
   }

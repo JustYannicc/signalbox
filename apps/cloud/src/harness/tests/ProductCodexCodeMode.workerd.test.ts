@@ -21,7 +21,7 @@ const digest = (value: Uint8Array) => NodeCrypto.createHash("sha256").update(val
 const MANIFEST_SHA256 = CODEX_WASI_RELEASE.files["manifest.json"].sha256;
 const ENGINE_SHA256 = CODEX_WASI_RELEASE.files["engine.wasm"].sha256;
 
-async function runProof(route: "run" | "fresh") {
+async function runProof(route: "run" | "fresh-default" | "fresh-openai" | "fresh-dotted") {
   if (!releaseDir || !programDir)
     throw new Error(
       "Pinned CodeMode product inputs are required: SIGNALBOX_CODE_MODE_RELEASE_DIR and SIGNALBOX_CODE_MODE_PROGRAM_DIR. See native/codex-wasm/README.md.",
@@ -188,20 +188,34 @@ describe("official Codex CodeMode through ProductComputer", () => {
       ).toEqual(lifecycle);
     }
   }, 120_000);
-  it("starts a fresh public thread without a model prewarm request", async () => {
-    const body = await runProof("fresh");
-    expect(body).toMatchObject({
-      active: 0,
-      processes: 0,
-      result: { modelRequests: [], modelHttpRequests: [] },
-    });
-    expect(body.result.nativeId).toEqual(expect.any(String));
-    const frames = body.result.input
-      .trim()
-      .split("\n")
-      .map((line: string) => JSON.parse(line));
-    expect(frames).toContainEqual(expect.objectContaining({ method: "thread/start" }));
-    expect(frames).not.toContainEqual(expect.objectContaining({ method: "turn/start" }));
-    expect(body.result.stderr.join("")).not.toMatch(/panicked|unreachable|WouldBlock/);
-  }, 120_000);
+  it.each(["fresh-default", "fresh-openai", "fresh-dotted"] as const)(
+    "starts %s without a model prewarm request",
+    async (route) => {
+      const body = await runProof(route);
+      expect(body).toMatchObject({
+        active: 0,
+        processes: 0,
+        result: { modelRequests: [], modelHttpRequests: [] },
+      });
+      expect(body.result.nativeId).toEqual(expect.any(String));
+      const frames = body.result.input
+        .trim()
+        .split("\n")
+        .map((line: string) => JSON.parse(line));
+      const provider = route === "fresh-dotted" ? "fixture.dot" : "signalbox-gateway";
+      expect(frames[0].overrides).toMatchObject({
+        model_provider: provider,
+        model_providers: {
+          [provider]: { base_url: "http://model.fixture/v1", supports_websockets: false },
+        },
+      });
+      expect(Object.keys(frames[0].overrides)).not.toContain(
+        `model_providers.${provider}.supports_websockets`,
+      );
+      expect(frames).toContainEqual(expect.objectContaining({ method: "thread/start" }));
+      expect(frames).not.toContainEqual(expect.objectContaining({ method: "turn/start" }));
+      expect(body.result.stderr.join("")).not.toMatch(/panicked|unreachable|WouldBlock/);
+    },
+    120_000,
+  );
 });

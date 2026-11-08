@@ -15,6 +15,7 @@ import {
   startCodexHarnessProcess,
   type CodexHarnessProcessOptions,
 } from "./CodexHarnessProcess.ts";
+import { gatewayConfig } from "./codex/gatewayConfig.ts";
 import { createCodexFetch } from "./CodexNetwork.ts";
 import { makeCodexProcessClient } from "./CodexTransport.ts";
 import type { HarnessProcessObserver } from "./HarnessProcessLifetime.ts";
@@ -39,8 +40,6 @@ export function makeCodexIsolateAdapter(options: CodexIsolateAdapterOptions): {
     Scope.Scope
   >;
 } {
-  const provider = options.process.bootstrap.overrides.model_provider;
-  const modelProvider = typeof provider === "string" ? provider : "openai";
   let opened = false;
   return {
     open: (input) =>
@@ -97,11 +96,10 @@ export function makeCodexIsolateAdapter(options: CodexIsolateAdapterOptions): {
                         ...options.process,
                         bootstrap: {
                           ...options.process.bootstrap,
-                          overrides: {
-                            ...options.process.bootstrap.overrides,
-                            // The model gateway serves Responses over HTTP and rejects upgrades with 426.
-                            [`model_providers.${modelProvider}.supports_websockets`]: false,
-                          },
+                          overrides: gatewayConfig(
+                            options.process.bootstrap.overrides,
+                            options.modelOrigins[0] ?? "",
+                          ),
                         },
                         fetch,
                         signal: lifetime.signal,
