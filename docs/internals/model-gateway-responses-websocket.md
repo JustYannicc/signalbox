@@ -2,7 +2,29 @@
 
 This contract describes the Cloud model gateway's WebSocket path for Codex's
 OpenAI Responses API. It does not claim the current `ModelGateway` HTTP handler
-implements that path. Model access and composition remain in the
+implements that path. Until it does, the gateway rejects upgrades with HTTP 426
+for genuine GET WebSocket handshakes. The Codex isolate uses an HTTP-only custom
+provider table. Built-in provider IDs are replaced with `signalbox-gateway`;
+custom IDs stay literal table keys, including dots. Flat provider overrides are
+normalized into those tables before every provider's WebSocket capability is
+forced off. No descendant override can re-enable it.
+
+Replacing OpenAI preserves `requires_openai_auth=true`, matching official
+[`create_openai_provider`](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/model-provider-info/src/lib.rs#L526).
+This retains its `auth.json` API-key and ChatGPT credential selection, as defined
+by [`requires_openai_auth`](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/model-provider-info/src/lib.rs#L188).
+Custom providers keep their configured authentication source.
+
+Official 0.162.1 defines `model_provider`, `model_providers`, and
+`supports_websockets` in its [config schema](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/core/config.schema.json).
+Its [config validation](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/config/src/config_toml.rs#L924)
+rejects overrides of reserved built-in IDs, and its
+[client transport selection](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/core/src/client.rs#L1030)
+uses the provider capability. Both older WebSocket feature flags are
+[removed](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/features/src/lib.rs#L1966).
+The [official configuration reference](https://developers.openai.com/codex/config-reference)
+documents the same provider capability.
+Model access and composition remain in the
 [models module](../../apps/cloud/src/models/README.md); the injected
 [Kernel WebSocket host ABI](../../native/codex-wasm/websocket/CONTRACT.md)
 defines the native transport boundary.

@@ -7,6 +7,7 @@ import { detachRpcData, releaseRpcResult, retainRpcResponse } from "../../../rpc
 import type { ModelServeReply } from "../../ModelProtocol.ts";
 import {
   LOCAL_KEY_HEADER,
+  isWebSocketHandshake,
   bearerOrKey,
   callerHeadersOf,
   errorResponse,
@@ -75,6 +76,10 @@ export async function handleModelRequest(
   const path = url.pathname.slice(MODEL_GATEWAY_PATHS[provider].length);
   if (!SERVED_PATHS[provider].some((served) => path === served || path.startsWith(`${served}/`))) {
     return errorResponse(provider, 404, `The ModelGateway does not serve ${path}.`);
+  }
+  if (isWebSocketHandshake(request)) {
+    // Codex needs 426 to fall back to HTTP, where the turn's secrets can be scrubbed.
+    return errorResponse(provider, 426, "Model WebSockets are not supported. Use HTTP instead.");
   }
   const token = bearerOrKey(request.headers);
   if (token === null) return errorResponse(provider, 401, "Missing model token or Signalbox key.");

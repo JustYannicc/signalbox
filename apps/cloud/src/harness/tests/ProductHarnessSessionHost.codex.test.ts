@@ -133,6 +133,19 @@ it.effect(
       });
       yield* Effect.addFinalizer(() => Effect.orDie(session.dispose));
       if (processOptions === undefined) throw new Error("Codex process did not start");
+      expect(processOptions.bootstrap.overrides).toMatchObject({
+        model_provider: "signalbox-gateway",
+        model_providers: {
+          "signalbox-gateway": {
+            base_url: "https://models.product.test/v1",
+            wire_api: "responses",
+            supports_websockets: false,
+          },
+        },
+      });
+      expect(processOptions.bootstrap.overrides).not.toHaveProperty(
+        "model_providers.openai.supports_websockets",
+      );
       expect(processOptions.computer).toBe(product.host.computer);
       expect(processOptions.host).toBe(product.host.commands.host);
       expect(processOptions.stdio.filesystem).toBe(product.host.computer.files);

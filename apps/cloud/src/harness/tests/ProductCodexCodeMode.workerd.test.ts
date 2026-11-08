@@ -21,164 +21,239 @@ const digest = (value: Uint8Array) => NodeCrypto.createHash("sha256").update(val
 const MANIFEST_SHA256 = CODEX_WASI_RELEASE.files["manifest.json"].sha256;
 const ENGINE_SHA256 = CODEX_WASI_RELEASE.files["engine.wasm"].sha256;
 
+async function runProof(
+  route:
+    | "run"
+    | "fresh-default"
+    | "fresh-openai"
+    | "fresh-dotted"
+    | "fresh-flat"
+    | "auth-default"
+    | "auth-openai",
+) {
+  if (!releaseDir || !programDir)
+    throw new Error(
+      "Pinned CodeMode product inputs are required: SIGNALBOX_CODE_MODE_RELEASE_DIR and SIGNALBOX_CODE_MODE_PROGRAM_DIR. See native/codex-wasm/README.md.",
+    );
+  const manifest = await NodeFSP.readFile(NodePath.join(releaseDir, "manifest.json"));
+  expect(digest(manifest)).toBe(MANIFEST_SHA256);
+  const engine = await NodeFSP.readFile(NodePath.join(releaseDir, "engine.wasm"));
+  expect(engine.byteLength).toBe(CODEX_WASI_RELEASE.files["engine.wasm"].bytes);
+  expect(digest(engine)).toBe(ENGINE_SHA256);
+  const prepared = await prepareChildPrograms({ programDir });
+  const paths = new Set([
+    "/bin/bash",
+    "/bin/sh",
+    "/bin/mkdir",
+    "/usr/bin/mkdir",
+    CODE_MODE_HOST_EXECUTABLE,
+  ]);
+  const files = prepared.commandExecutableFiles.filter((file) => paths.has(file.path));
+  expect(files).toHaveLength(paths.size);
+  const seed = files.map(({ bytes, ...file }) => ({
+    ...file,
+    bytes: bytes.length,
+    uid: 1000,
+    gid: 1000,
+  }));
+  const assets = Object.fromEntries(
+    files.map((file) => [file.sha256, Buffer.from(file.bytes).toString("base64")]),
+  );
+  const staging = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "product-code-mode-"));
+  let harness: ReturnType<typeof createTestHarness> | undefined;
+  try {
+    const entry = NodeURL.fileURLToPath(
+      new URL("./productCodeMode/product.workerd.fixture.ts", import.meta.url),
+    );
+    const built = await build({
+      entryPoints: [entry],
+      bundle: true,
+      format: "esm",
+      platform: "neutral",
+      target: "esnext",
+      mainFields: ["module", "main"],
+      conditions: ["workerd", "worker", "browser"],
+      external: ["cloudflare:workers", "node:*", "./codex-engine.wasm"],
+      write: false,
+    });
+    const main = NodePath.join(staging, "main.mjs");
+    await NodeFSP.writeFile(main, built.outputFiles[0]!.text);
+    await NodeFSP.writeFile(NodePath.join(staging, "codex-engine.wasm"), engine);
+    harness = createTestHarness({
+      workers: [
+        {
+          config: {
+            name: "product-codex-code-mode",
+            main,
+            compatibility_date: "2026-10-19",
+            compatibility_flags: ["nodejs_compat"],
+            worker_loaders: [{ binding: "LOADER" }],
+            vars: { SOURCES: prepared.programs, SEED: seed, ASSETS: assets },
+            durable_objects: { bindings: [{ name: "HOST", class_name: "Host" }] },
+            migrations: [{ tag: "v1", new_sqlite_classes: ["Host"] }],
+          },
+        },
+      ],
+    });
+    await harness.listen();
+    const response = await harness.fetch(`http://proof/${route}`);
+    const text = await response.text();
+    if (NodeProcess.env.SIGNALBOX_CODE_MODE_EVIDENCE !== undefined)
+      await NodeFSP.writeFile(
+        `${NodeProcess.env.SIGNALBOX_CODE_MODE_EVIDENCE}.${route}.json`,
+        text,
+      );
+    expect(response.status, text).toBe(200);
+    return JSON.parse(text);
+  } finally {
+    await harness?.close();
+    await NodeFSP.rm(staging, { recursive: true, force: true });
+  }
+}
+
 describe("official Codex CodeMode through ProductComputer", () => {
   it("spawns the companion natively and executes the recorded exec source through the exec server", async () => {
-    if (!releaseDir || !programDir)
-      throw new Error(
-        "Pinned CodeMode product inputs are required: SIGNALBOX_CODE_MODE_RELEASE_DIR and SIGNALBOX_CODE_MODE_PROGRAM_DIR. See native/codex-wasm/README.md.",
-      );
-    const manifest = await NodeFSP.readFile(NodePath.join(releaseDir, "manifest.json"));
-    expect(digest(manifest)).toBe(MANIFEST_SHA256);
-    const engine = await NodeFSP.readFile(NodePath.join(releaseDir, "engine.wasm"));
-    expect(engine.byteLength).toBe(CODEX_WASI_RELEASE.files["engine.wasm"].bytes);
-    expect(digest(engine)).toBe(ENGINE_SHA256);
-    const prepared = await prepareChildPrograms({ programDir });
-    const paths = new Set([
-      "/bin/bash",
-      "/bin/sh",
-      "/bin/mkdir",
-      "/usr/bin/mkdir",
-      CODE_MODE_HOST_EXECUTABLE,
-    ]);
-    const files = prepared.commandExecutableFiles.filter((file) => paths.has(file.path));
-    expect(files).toHaveLength(paths.size);
-    const seed = files.map(({ bytes, ...file }) => ({
-      ...file,
-      bytes: bytes.length,
-      uid: 1000,
-      gid: 1000,
-    }));
-    const assets = Object.fromEntries(
-      files.map((file) => [file.sha256, Buffer.from(file.bytes).toString("base64")]),
+    const body = await runProof("run");
+    expect(body).toMatchObject({
+      active: 0,
+      processes: 0,
+      result: {
+        completed: { method: "turn/completed", params: { turn: { status: "completed" } } },
+        directory: "directory",
+        machineCalls: [],
+        companionManifest: {
+          status: "ok",
+          value: { name: "@signalbox/codex-code-mode-host", version: "0.162.1-workerd-port.1" },
+        },
+      },
+    });
+    const spawns = body.result.nativeSpawns.filter(
+      (spawn: { executable: string }) => spawn.executable === CODE_MODE_HOST_EXECUTABLE,
     );
-    const staging = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "product-code-mode-"));
-    let harness: ReturnType<typeof createTestHarness> | undefined;
-    try {
-      const entry = NodeURL.fileURLToPath(
-        new URL("./productCodeMode/product.workerd.fixture.ts", import.meta.url),
+    expect(spawns).toHaveLength(1);
+    expect(spawns[0].parent).toBeDefined();
+    expect(body.result.cellTools).toEqual([
+      expect.arrayContaining(["exec_command"]),
+      expect.arrayContaining(["exec_command"]),
+    ]);
+    expect(body.result.execWire).toContainEqual(
+      expect.objectContaining({
+        direction: "in",
+        message: expect.objectContaining({
+          method: "process/start",
+          params: expect.objectContaining({
+            cwd: "file:///work",
+            argv: ["/bin/bash", "-lc", "mkdir -p docs/routines/evening"],
+          }),
+        }),
+      }),
+    );
+    expect(body.result.execCalls).toHaveLength(2);
+    expect(body.result.execCalls[0]).toEqual(
+      expect.objectContaining({
+        executable: "/bin/bash",
+        cwd: "/work",
+        argv: expect.arrayContaining(["mkdir -p docs/routines/evening"]),
+      }),
+    );
+    expect(body.result.modelRequests).toHaveLength(3);
+    const continued = body.result.modelRequests[1].input;
+    expect(continued).toContainEqual(
+      expect.objectContaining({
+        type: "custom_tool_call",
+        name: "exec",
+        input: CODE_MODE_SOURCE,
+      }),
+    );
+    const output = continued.find(
+      (item: { call_id?: string }) => item.call_id === "call-code-mode" && "output" in item,
+    );
+    expect(JSON.stringify(output)).toContain("Script completed");
+    const echoed = body.result.modelRequests[2].input.find(
+      (item: { call_id?: string }) => item.call_id === "call-output" && "output" in item,
+    );
+    expect(JSON.stringify(echoed)).toContain("code-mode-output");
+    expect(body.result.resultObservations).toHaveLength(2);
+    for (const tool_call_id of ["call-code-mode", "call-output"]) {
+      const { lifecycle } = body.result.resultObservations.find(
+        (result: { tool_call_id: string }) => result.tool_call_id === tool_call_id,
       );
-      const built = await build({
-        entryPoints: [entry],
-        bundle: true,
-        format: "esm",
-        platform: "neutral",
-        target: "esnext",
-        mainFields: ["module", "main"],
-        conditions: ["workerd", "worker", "browser"],
-        external: ["cloudflare:workers", "node:*", "./codex-engine.wasm"],
-        write: false,
-      });
-      const main = NodePath.join(staging, "main.mjs");
-      await NodeFSP.writeFile(main, built.outputFiles[0]!.text);
-      await NodeFSP.writeFile(NodePath.join(staging, "codex-engine.wasm"), engine);
-      harness = createTestHarness({
-        workers: [
-          {
-            config: {
-              name: "product-codex-code-mode",
-              main,
-              compatibility_date: "2026-10-19",
-              compatibility_flags: ["nodejs_compat"],
-              worker_loaders: [{ binding: "LOADER" }],
-              vars: { SOURCES: prepared.programs, SEED: seed, ASSETS: assets },
-              durable_objects: { bindings: [{ name: "HOST", class_name: "Host" }] },
-              migrations: [{ tag: "v1", new_sqlite_classes: ["Host"] }],
-            },
-          },
-        ],
-      });
-      await harness.listen();
-      const response = await harness.fetch("http://proof/run");
-      const text = await response.text();
-      if (NodeProcess.env.SIGNALBOX_CODE_MODE_EVIDENCE !== undefined)
-        await NodeFSP.writeFile(NodeProcess.env.SIGNALBOX_CODE_MODE_EVIDENCE, text);
-      expect(response.status, text).toBe(200);
-      const body = JSON.parse(text);
+      expect(lifecycle).toEqual([
+        expect.objectContaining({ type: "started", tool_call_id }),
+        expect.objectContaining({
+          type: "closed",
+          started: true,
+          outcome: "completed",
+          error: null,
+          tool_call_id,
+          sessionId: lifecycle[0].sessionId,
+          cellId: lifecycle[0].cellId,
+        }),
+      ]);
+      expect(
+        body.result.lifecycle.filter(
+          (event: { tool_call_id: string }) => event.tool_call_id === tool_call_id,
+        ),
+      ).toEqual(lifecycle);
+    }
+  }, 120_000);
+  it.each(["fresh-default", "fresh-openai", "fresh-dotted", "fresh-flat"] as const)(
+    "starts %s without a model prewarm request",
+    async (route) => {
+      const body = await runProof(route);
       expect(body).toMatchObject({
         active: 0,
         processes: 0,
-        result: {
-          completed: { method: "turn/completed", params: { turn: { status: "completed" } } },
-          directory: "directory",
-          machineCalls: [],
-          companionManifest: {
-            status: "ok",
-            value: { name: "@signalbox/codex-code-mode-host", version: "0.162.1-workerd-port.1" },
-          },
+        result: { modelRequests: [], modelHttpRequests: [] },
+      });
+      expect(body.result.nativeId).toEqual(expect.any(String));
+      const frames = body.result.input
+        .trim()
+        .split("\n")
+        .map((line: string) => JSON.parse(line));
+      const provider =
+        route === "fresh-dotted"
+          ? "fixture.dot"
+          : route === "fresh-flat"
+            ? "fixture"
+            : "signalbox-gateway";
+      expect(frames[0].overrides).toMatchObject({
+        model_provider: provider,
+        model_providers: {
+          [provider]: { base_url: "http://model.fixture/v1", supports_websockets: false },
         },
       });
-      const spawns = body.result.nativeSpawns.filter(
-        (spawn: { executable: string }) => spawn.executable === CODE_MODE_HOST_EXECUTABLE,
+      expect(Object.keys(frames[0].overrides)).not.toContain(
+        `model_providers.${provider}.supports_websockets`,
       );
-      expect(spawns).toHaveLength(1);
-      expect(spawns[0].parent).toBeDefined();
-      expect(body.result.cellTools).toEqual([
-        expect.arrayContaining(["exec_command"]),
-        expect.arrayContaining(["exec_command"]),
+      expect(frames).toContainEqual(expect.objectContaining({ method: "thread/start" }));
+      expect(frames).not.toContainEqual(expect.objectContaining({ method: "turn/start" }));
+      expect(body.result.stderr.join("")).not.toMatch(/panicked|unreachable|WouldBlock/);
+    },
+    120_000,
+  );
+  it.each(["auth-default", "auth-openai"] as const)(
+    "preserves auth.json authentication and scrubbing through two %s SSE turns",
+    async (route) => {
+      const body = await runProof(route);
+      expect(body).toMatchObject({
+        active: 0,
+        processes: 0,
+        result: { completions: ["completed", "completed"] },
+      });
+      const auth = body.result.authentication;
+      expect(auth.arrivals).toHaveLength(2);
+      expect(auth.arrivals).toEqual([
+        { authenticated: true, status: 200 },
+        { authenticated: true, status: 200 },
       ]);
-      expect(body.result.execWire).toContainEqual(
-        expect.objectContaining({
-          direction: "in",
-          message: expect.objectContaining({
-            method: "process/start",
-            params: expect.objectContaining({
-              cwd: "file:///work",
-              argv: ["/bin/bash", "-lc", "mkdir -p docs/routines/evening"],
-            }),
-          }),
-        }),
-      );
-      expect(body.result.execCalls).toHaveLength(2);
-      expect(body.result.execCalls[0]).toEqual(
-        expect.objectContaining({
-          executable: "/bin/bash",
-          cwd: "/work",
-          argv: expect.arrayContaining(["mkdir -p docs/routines/evening"]),
-        }),
-      );
-      expect(body.result.modelRequests).toHaveLength(3);
-      const continued = body.result.modelRequests[1].input;
-      expect(continued).toContainEqual(
-        expect.objectContaining({
-          type: "custom_tool_call",
-          name: "exec",
-          input: CODE_MODE_SOURCE,
-        }),
-      );
-      const output = continued.find(
-        (item: { call_id?: string }) => item.call_id === "call-code-mode" && "output" in item,
-      );
-      expect(JSON.stringify(output)).toContain("Script completed");
-      const echoed = body.result.modelRequests[2].input.find(
-        (item: { call_id?: string }) => item.call_id === "call-output" && "output" in item,
-      );
-      expect(JSON.stringify(echoed)).toContain("code-mode-output");
-      expect(body.result.resultObservations).toHaveLength(2);
-      for (const tool_call_id of ["call-code-mode", "call-output"]) {
-        const { lifecycle } = body.result.resultObservations.find(
-          (result: { tool_call_id: string }) => result.tool_call_id === tool_call_id,
-        );
-        expect(lifecycle).toEqual([
-          expect.objectContaining({ type: "started", tool_call_id }),
-          expect.objectContaining({
-            type: "closed",
-            started: true,
-            outcome: "completed",
-            error: null,
-            tool_call_id,
-            sessionId: lifecycle[0].sessionId,
-            cellId: lifecycle[0].cellId,
-          }),
-        ]);
-        expect(
-          body.result.lifecycle.filter(
-            (event: { tool_call_id: string }) => event.tool_call_id === tool_call_id,
-          ),
-        ).toEqual(lifecycle);
+      expect(auth.requests).toHaveLength(2);
+      for (const request of auth.requests) {
+        expect(request.body).toContain(auth.placeholder);
+        expect(request.body).not.toContain(auth.secret);
+        expect(request.authorization).toBeNull();
       }
-    } finally {
-      await harness?.close();
-      await NodeFSP.rm(staging, { recursive: true, force: true });
-    }
-  }, 120_000);
+    },
+    120_000,
+  );
 });

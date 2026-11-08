@@ -2,6 +2,7 @@
 import { type SecretValue, secretPlaceholder } from "@signalbox/runner-protocol/SecretScrubber";
 import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 
 import { makeModelAccess } from "./testing.ts";
@@ -33,6 +34,16 @@ const makeGateway = (secrets: ReadonlyArray<SecretValue>, authorization?: ModelA
   Effect.gen(function* () {
     const forwarded: Array<Forwarded> = [];
     const pool: ModelPoolRoute = { objectName: "user_1:personal", userId: "user_1" };
+    const forward = vi.fn<Parameters<typeof makeModelAccess>[0]["forward"]>(
+      async (_pool, _path, request) => {
+        forwarded.push({ body: await request.text(), headers: request.headers });
+        return {
+          _tag: "forwarded",
+          response: new Response("ok"),
+          upstreamMs: 1,
+        } satisfies ModelForwardReply;
+      },
+    );
     const access = yield* makeModelAccess({
       authorizeThread: async (): Promise<ModelAuthorization> =>
         authorization ?? {
@@ -43,14 +54,7 @@ const makeGateway = (secrets: ReadonlyArray<SecretValue>, authorization?: ModelA
           secrets,
         },
       authorizeLocal: async () => ({ _tag: "denied", reason: "not used" }),
-      forward: async (_pool, _path, request) => {
-        forwarded.push({ body: await request.text(), headers: request.headers });
-        return {
-          _tag: "forwarded",
-          response: new Response("ok"),
-          upstreamMs: 1,
-        } satisfies ModelForwardReply;
-      },
+      forward,
       recordThread: async () => undefined,
       recordLocal: async () => undefined,
     });
@@ -76,10 +80,14 @@ const makeGateway = (secrets: ReadonlyArray<SecretValue>, authorization?: ModelA
     const upgrade = () =>
       send(
         new Request("http://gateway.test/openai/v1/responses", {
-          headers: { authorization: `Bearer ${TOKEN}`, upgrade: "websocket" },
+          headers: {
+            authorization: `Bearer ${TOKEN}`,
+            connection: "Upgrade",
+            upgrade: "websocket",
+          },
         }),
       );
-    return { call, upgrade, forwarded };
+    return { call, upgrade, forward, forwarded };
   });
 
 /** `text` as a body that arrives in the pieces `cuts` makes. */
@@ -170,9 +178,23 @@ describe("the ModelGateway with a turn's secrets", () => {
       const env = (key: string, pass: string) =>
         `FAKE_SECRET=${key}\nDATABASE_URL=postgres://app:${pass}@db.internal/app\nPORT=3000\n`;
 
-      yield* gateway.call("/openai/v1/responses", codexCat(env(value, password)));
+      const response = yield* gateway.call("/openai/v1/responses", codexCat(env(value, password)));
 
+      expect(response.status).toBe(200);
       expect(gateway.forwarded.map(({ body }) => body)).toEqual([codexCat(env(FAKE, DB))]);
+    }),
+  );
+
+  it.effect("scrubs a secret-bearing HTTP POST even when it carries Upgrade", () =>
+    Effect.gen(function* () {
+      const value = fake("post-upgrade");
+      const gateway = yield* makeGateway([{ name: "FAKE_SECRET", value }]);
+      const response = yield* gateway.call("/openai/v1/responses", codexCat(value), {
+        connection: "Upgrade",
+        upgrade: "websocket",
+      });
+      expect(response.status).toBe(200);
+      expect(gateway.forwarded.map(({ body }) => body)).toEqual([codexCat(FAKE)]);
     }),
   );
 
@@ -280,15 +302,19 @@ describe("the ModelGateway with a turn's secrets", () => {
     }),
   );
 
-  it.effect("refuses a WebSocket, whose messages it would never see", () =>
-    Effect.gen(function* () {
-      const gateway = yield* makeGateway([{ name: "FAKE_SECRET", value: fake("ws") }]);
+  it.effect(
+    "returns 426 for HTTP fallback without opening a WebSocket that bypasses secret scrubbing",
+    () =>
+      Effect.gen(function* () {
+        const gateway = yield* makeGateway([{ name: "FAKE_SECRET", value: fake("ws") }]);
 
-      const response = yield* gateway.upgrade();
+        const response = yield* gateway.upgrade();
 
-      expect(response.status).toBe(403);
-      expect(gateway.forwarded).toEqual([]);
-    }),
+        expect(response.status).toBe(426);
+        expect(gateway.forward).not.toHaveBeenCalled();
+        expect(gateway.forwarded).toEqual([]);
+        expect(response).not.toHaveProperty("webSocket", expect.anything());
+      }),
   );
 
   it.effect("forwards a turn without secrets exactly as it came", () =>
