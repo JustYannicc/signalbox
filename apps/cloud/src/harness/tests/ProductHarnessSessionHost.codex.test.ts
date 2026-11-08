@@ -133,6 +133,9 @@ it.effect(
       });
       yield* Effect.addFinalizer(() => Effect.orDie(session.dispose));
       if (processOptions === undefined) throw new Error("Codex process did not start");
+      expect(processOptions.bootstrap.overrides["model_providers.openai.supports_websockets"]).toBe(
+        false,
+      );
       expect(processOptions.computer).toBe(product.host.computer);
       expect(processOptions.host).toBe(product.host.commands.host);
       expect(processOptions.stdio.filesystem).toBe(product.host.computer.files);

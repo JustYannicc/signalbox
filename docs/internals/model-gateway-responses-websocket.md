@@ -2,7 +2,9 @@
 
 This contract describes the Cloud model gateway's WebSocket path for Codex's
 OpenAI Responses API. It does not claim the current `ModelGateway` HTTP handler
-implements that path. Model access and composition remain in the
+implements that path. Until it does, the gateway rejects upgrades with HTTP 426
+and the Codex isolate disables WebSockets in its selected provider configuration.
+Model access and composition remain in the
 [models module](../../apps/cloud/src/models/README.md); the injected
 [Kernel WebSocket host ABI](../../native/codex-wasm/websocket/CONTRACT.md)
 defines the native transport boundary.

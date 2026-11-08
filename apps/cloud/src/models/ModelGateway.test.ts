@@ -109,6 +109,23 @@ describe("ModelGateway", () => {
     expect(gateway.forwarded[0]?.request.headers.get("authorization")).toBeNull();
   });
 
+  it.each(["websocket", "WebSocket", "h2c, websocket"])(
+    "rejects a %s upgrade with Codex's HTTP fallback signal",
+    async (upgrade) => {
+      const gateway = makeGateway({});
+      const response = await gateway.call("/openai/v1/responses", {
+        method: "GET",
+        headers: { authorization: `Bearer ${LIVE}`, connection: "Upgrade", upgrade },
+      });
+      expect(response.status).toBe(426);
+      expect(await response.json()).toMatchObject({
+        error: { message: expect.stringContaining("HTTP") },
+      });
+      expect(gateway.asked).toEqual([]);
+      expect(gateway.forwarded).toEqual([]);
+    },
+  );
+
   it("serves a local key's request on its pool, recorded for its user rather than a turn", async () => {
     const gateway = makeGateway({ upstream: () => sse(['data: {"type":"message_start"}\n\n']) });
     const response = await gateway.call("/anthropic/v1/messages", {

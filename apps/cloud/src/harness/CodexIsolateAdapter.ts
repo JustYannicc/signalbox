@@ -39,6 +39,8 @@ export function makeCodexIsolateAdapter(options: CodexIsolateAdapterOptions): {
     Scope.Scope
   >;
 } {
+  const provider = options.process.bootstrap.overrides.model_provider;
+  const modelProvider = typeof provider === "string" ? provider : "openai";
   let opened = false;
   return {
     open: (input) =>
@@ -93,6 +95,14 @@ export function makeCodexIsolateAdapter(options: CodexIsolateAdapterOptions): {
                     try: () =>
                       startCodexHarnessProcess({
                         ...options.process,
+                        bootstrap: {
+                          ...options.process.bootstrap,
+                          overrides: {
+                            ...options.process.bootstrap.overrides,
+                            // The model gateway serves Responses over HTTP and rejects upgrades with 426.
+                            [`model_providers.${modelProvider}.supports_websockets`]: false,
+                          },
+                        },
                         fetch,
                         signal: lifetime.signal,
                       }),

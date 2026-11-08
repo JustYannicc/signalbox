@@ -76,6 +76,14 @@ export async function handleModelRequest(
   if (!SERVED_PATHS[provider].some((served) => path === served || path.startsWith(`${served}/`))) {
     return errorResponse(provider, 404, `The ModelGateway does not serve ${path}.`);
   }
+  if (
+    request.headers
+      .get("upgrade")
+      ?.split(",")
+      .some((protocol) => protocol.trim().toLowerCase() === "websocket")
+  ) {
+    return errorResponse(provider, 426, "Model WebSockets are not supported. Use HTTP instead.");
+  }
   const token = bearerOrKey(request.headers);
   if (token === null) return errorResponse(provider, 401, "Missing model token or Signalbox key.");
 

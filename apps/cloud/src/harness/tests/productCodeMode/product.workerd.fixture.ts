@@ -16,11 +16,15 @@ import {
   emptyMachineFilesFixture,
   machineInventoryFixture,
 } from "../../../computer/machineInventoryTesting.ts";
-import { startCodexHarnessProcess } from "../../CodexHarnessProcess.ts";
+import {
+  startCodexHarnessProcess,
+  type CodexHarnessProcessOptions,
+} from "../../CodexHarnessProcess.ts";
 import { CODE_MODE_HOST_EXECUTABLE } from "../../CodeModeHost.ts";
 import type { KernelCommand } from "../../../kernel/KernelCommandForwarder.ts";
 import { appServerDriver } from "./driver.ts";
 import { codeModeResponses } from "./model.ts";
+import { freshThread } from "./fresh.ts";
 import type { CodeModeLifecycleEvent } from "../../../codeMode/Lifecycle.ts";
 
 interface Env {
@@ -32,7 +36,7 @@ interface Env {
 }
 
 export class Host extends DurableObject<Env> {
-  async run() {
+  async run(fresh = false) {
     const wakes = new KernelWakeRegistry();
     const controller = new AbortController();
     const stdio = createKernelSessionStdio(wakes, controller.signal);
@@ -93,6 +97,7 @@ export class Host extends DurableObject<Env> {
         },
       }),
     });
+    const modelHttpRequests: { method: string; url: string; upgrade: string | null }[] = [];
     const nativeSpawns: { executable: string; parent: unknown }[] = [];
     const originalSpawn = computer.host.spawn.bind(computer.host);
     computer.host.spawn = (context, request) => {
@@ -153,7 +158,7 @@ export class Host extends DurableObject<Env> {
     let driver: ReturnType<typeof appServerDriver> | undefined;
     let result: unknown;
     try {
-      const process = await startCodexHarnessProcess({
+      const processOptions = {
         engine: ENGINE,
         host: computer.host,
         stdio,
@@ -195,7 +200,7 @@ export class Host extends DurableObject<Env> {
               base_url: "http://model.fixture/v1",
               wire_api: "responses",
               requires_openai_auth: false,
-              supports_websockets: false,
+              supports_websockets: fresh,
               request_max_retries: 0,
               stream_max_retries: 0,
             },
@@ -214,45 +219,65 @@ export class Host extends DurableObject<Env> {
           shell: { name: "bash", path: "/bin/bash" },
           executorVersion: "product-code-mode-fixture",
         },
-        fetch: (request) => model.fetch(request),
+        fetch: (request) => {
+          if (new URL(request.url).origin !== "http://model.fixture")
+            return Promise.resolve(new Response(null, { status: 404 }));
+          modelHttpRequests.push({
+            method: request.method,
+            url: request.url,
+            upgrade: request.headers.get("upgrade"),
+          });
+          if (request.headers.has("upgrade"))
+            return Promise.resolve(new Response(null, { status: 426 }));
+          return model.fetch(request);
+        },
         lifetime: this.ctx,
         signal: controller.signal,
-      });
-      driver = appServerDriver(process);
-      await process.ready;
-      const started = await driver.request("thread/start", {
-        cwd: "/work",
-        model: "gpt-5.5",
-        modelProvider: "fixture",
-        approvalPolicy: "never",
-        sandbox: "danger-full-access",
-      });
-      const threadId = started.thread?.id;
-      if (threadId === undefined) throw new Error("Official engine did not start a thread");
-      await driver.request("turn/start", {
-        threadId,
-        input: [{ type: "text", text: "Create docs/routines/evening through exec." }],
-        cwd: "/work",
-        model: "gpt-5.5",
-        approvalPolicy: "never",
-        sandboxPolicy: { type: "dangerFullAccess" },
-      });
-      const completed = await driver.completed;
-      result = {
-        completed,
-        nativeSpawns,
-        execCalls,
-        machineCalls,
-        cellTools,
-        lifecycle,
-        resultObservations,
-        execWire,
-        modelRequests: model.requests,
-        frames: driver.frames,
-        stderr: driver.errors.join(""),
-        directory: files.stat("/work/docs/routines/evening").type,
-        companionManifest: computer.host.resolve(CODE_MODE_HOST_EXECUTABLE),
-      };
+      } satisfies CodexHarnessProcessOptions;
+      if (fresh) {
+        result = {
+          ...(await freshThread(processOptions)),
+          modelRequests: model.requests,
+          modelHttpRequests,
+        };
+      } else {
+        const process = await startCodexHarnessProcess(processOptions);
+        driver = appServerDriver(process);
+        await process.ready;
+        const started = await driver.request("thread/start", {
+          cwd: "/work",
+          model: "gpt-5.5",
+          modelProvider: "fixture",
+          approvalPolicy: "never",
+          sandbox: "danger-full-access",
+        });
+        const threadId = started.thread?.id;
+        if (threadId === undefined) throw new Error("Official engine did not start a thread");
+        await driver.request("turn/start", {
+          threadId,
+          input: [{ type: "text", text: "Create docs/routines/evening through exec." }],
+          cwd: "/work",
+          model: "gpt-5.5",
+          approvalPolicy: "never",
+          sandboxPolicy: { type: "dangerFullAccess" },
+        });
+        const completed = await driver.completed;
+        result = {
+          completed,
+          nativeSpawns,
+          execCalls,
+          machineCalls,
+          cellTools,
+          lifecycle,
+          resultObservations,
+          execWire,
+          modelRequests: model.requests,
+          frames: driver.frames,
+          stderr: driver.errors.join(""),
+          directory: files.stat("/work/docs/routines/evening").type,
+          companionManifest: computer.host.resolve(CODE_MODE_HOST_EXECUTABLE),
+        };
+      }
     } catch (error) {
       throw new Error(
         `Product CodeMode failed: ${String(error)} ${JSON.stringify({ frames: driver?.frames, stderr: driver?.errors, modelRequests: model.requests, nativeSpawns, execCalls, cellTools, execWire })}`,
@@ -271,9 +296,11 @@ export class Host extends DurableObject<Env> {
 }
 
 export default {
-  async fetch(_request: Request, env: Env) {
+  async fetch(request: Request, env: Env) {
     try {
-      return Response.json(await env.HOST.getByName("proof").run());
+      return Response.json(
+        await env.HOST.getByName("proof").run(new URL(request.url).pathname === "/fresh"),
+      );
     } catch (error) {
       return Response.json(
         { error: String(error), stack: error instanceof Error ? error.stack : undefined },
