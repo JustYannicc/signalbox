@@ -176,7 +176,8 @@ jobs:
     name: Test ${{ matrix.partition }}
     needs: cloud_migrations
     if: ${{ !cancelled() && needs.cloud_migrations.outputs.test != 'false' }}
-    runs-on: ubuntu-latest
+    # The two unpublished product programs have pinned ARM64 build recipes.
+    runs-on: ${{ matrix.partition == 'cloud-1' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: ${{ matrix.partition == 'cloud-1' && 45 || 30 }}
     strategy:
       fail-fast: false
@@ -243,7 +244,7 @@ jobs:
           path: |
             ${{ runner.temp }}/codex-code-mode-release
             ${{ runner.temp }}/codex-code-mode-programs
-          key: codex-product-${{ runner.os }}-${{ hashFiles('apps/cloud/infra/codexTurn/release.ts', 'apps/cloud/infra/kernelPrograms/**', 'apps/cloud/infra/childPrograms/gitTemplates.manifest.json', 'apps/cloud/src/kernel/*Program*.ts', 'scripts/harness-releases/productProgram*.ts') }}
+          key: codex-product-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/cloud/infra/codexTurn/release.ts', 'apps/cloud/infra/kernelPrograms/**', 'apps/cloud/infra/childPrograms/gitTemplates.manifest.json', 'apps/cloud/src/kernel/*Program*.ts', 'scripts/harness-releases/productProgram*.ts') }}
 
       - name: Fetch pinned Codex product proof inputs
         if: ${{ matrix.partition == 'cloud-1' && steps.codex_product_cache.outputs.cache-hit != 'true' }}
