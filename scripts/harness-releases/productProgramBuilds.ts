@@ -2,7 +2,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { downloadRelease } from "@t3tools/shared/releaseDownload";
+import { downloadRelease } from "@signalbox/cloud/infra/releaseDownload";
 import {
   applyGitTemplateSubstitutions,
   mountAospkgTar,

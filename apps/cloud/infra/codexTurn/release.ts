@@ -2,7 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { downloadRelease } from "@t3tools/shared/releaseDownload";
+import { downloadRelease } from "../releaseDownload.ts";
 
 // The unchanged builder at this commit reproduced all four files byte for byte.
 export const CODEX_WASI_RELEASE = {

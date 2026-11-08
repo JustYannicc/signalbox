@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off globalTimers:off - Node-side release downloads run outside an Effect runtime.
 export interface ReleaseDownloadOptions {
   readonly fetch?: typeof fetch | undefined;
   readonly token?: string | undefined;

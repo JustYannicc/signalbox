@@ -3,10 +3,6 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./releaseDownload": {
-      "types": "./src/releaseDownload.ts",
-      "import": "./src/releaseDownload.ts"
-    },
     "./waitingCost": {
       "types": "./src/waitingCost.ts",
       "import": "./src/waitingCost.ts"

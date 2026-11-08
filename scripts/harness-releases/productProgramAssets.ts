@@ -1,6 +1,6 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { downloadRelease } from "@t3tools/shared/releaseDownload";
+import { downloadRelease } from "@signalbox/cloud/infra/releaseDownload";
 import { sha256, verifyPinnedBytes, writePinnedTarFiles } from "./productProgramArchive.ts";
 import { writeOnce } from "./productProgramRuntime.ts";
 import type {

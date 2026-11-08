@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./infra/releaseDownload": "./infra/releaseDownload.ts",
     "./testing/workerdAdmission": "./infra/harnessReleases/testing/workerdAdmission.ts"
   },
   "scripts": {
