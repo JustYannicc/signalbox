@@ -12,6 +12,7 @@ import { prepareChildPrograms } from "../../../infra/childPrograms/prepare.ts";
 import { CODEX_WASI_RELEASE } from "../../../infra/codexTurn/release.ts";
 import { CODE_MODE_HOST_EXECUTABLE } from "../../computer/CodeModeManifest.ts";
 import { CODE_MODE_SOURCE } from "./productCodeMode/model.ts";
+import { retentionClockPlugin } from "./productCodeMode/retentionClockBuild.ts";
 
 const releaseDir = NodeProcess.env.SIGNALBOX_CODE_MODE_RELEASE_DIR;
 const programDir = NodeProcess.env.SIGNALBOX_CODE_MODE_PROGRAM_DIR;
@@ -79,6 +80,7 @@ async function runProof(
       conditions: ["workerd", "worker", "browser"],
       external: ["cloudflare:workers", "node:*", "./codex-engine.wasm"],
       write: false,
+      plugins: route.startsWith("reconnect") ? [retentionClockPlugin()] : [],
     });
     const main = NodePath.join(staging, "main.mjs");
     await NodeFSP.writeFile(main, built.outputFiles[0]!.text);
@@ -121,11 +123,7 @@ describe("official Codex CodeMode through ProductComputer", () => {
     "admits exec sessions through public creation and first turn: %s",
     async (route) => {
       const body = await runProof(route);
-      const capacityErrors = body.result.execWire.filter(
-        (entry: { readonly message?: { readonly error?: { readonly message: string } } }) =>
-          entry.message?.error?.message === "Too many exec-server sessions",
-      );
-      expect(capacityErrors).toEqual([]);
+      expect(body.result.initializationErrors).toEqual([]);
       expect(body.result.completions).toEqual(["completed"]);
       expect(body.active).toBe(0);
       expect(body.processes).toBe(0);
@@ -139,10 +137,10 @@ describe("official Codex CodeMode through ProductComputer", () => {
           ),
         ).toHaveLength(1);
       else {
-        const detached = body.result.execWire.find(
-          (entry: { readonly direction: string }) => entry.direction === "detached",
-        );
-        expect(body.result.finishedAtMs - detached.elapsed).toBeLessThan(30_000);
+        const admission = body.result.admission;
+        expect(admission).toMatchObject({ retainedUntil: 100, admittedAt: 1 });
+        expect(admission.sessionId).not.toBe(admission.previousSessionId);
+        expect(admission.admittedAt).toBeLessThan(admission.retainedUntil);
       }
     },
     120_000,

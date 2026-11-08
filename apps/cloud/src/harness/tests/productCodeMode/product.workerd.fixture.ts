@@ -1,7 +1,6 @@
 import { fileSearchProof } from "./cancellation.ts";
 import ENGINE from "./codex-engine.wasm";
-import * as Clock from "effect/Clock";
-import * as Effect from "effect/Effect";
+import { retentionClock } from "./retentionClock.ts";
 import { CodexExecSessions } from "../../../kernel/CodexExecSessions.ts";
 import { DurableObject } from "cloudflare:workers";
 import { createProductComputer } from "../../../computer/ProductComputer.ts";
@@ -125,10 +124,20 @@ export class Host extends DurableObject<Env> {
     const execWire: unknown[] = [];
     let detach: (() => void) | undefined;
     let outage = false;
-    const now = () => Effect.runSync(Clock.currentTimeMillis);
-    const startedAt = now();
+    const initializationErrors: unknown[] = [];
+    let initialSessionId: string | undefined;
+    let retainedUntil: number | undefined;
+    let admission:
+      | {
+          sessionId: string;
+          previousSessionId: string;
+          admittedAt: number;
+          retainedUntil: number | undefined;
+        }
+      | undefined;
     const connect = CodexExecSessions.prototype.connect;
     CodexExecSessions.prototype.connect = function (send, disconnect, owner) {
+      let initializeId: unknown;
       const connection = connect.call(
         this,
         (message) => {
@@ -136,7 +145,29 @@ export class Host extends DurableObject<Env> {
             provider === "reconnect" &&
             (("id" in message && message.id === 1) || "error" in message)
           )
-            execWire.push({ direction: "out", message, elapsed: now() - startedAt });
+            execWire.push({ direction: "out", message });
+          if (provider === "reconnect" && "id" in message && message.id === initializeId) {
+            if ("error" in message) {
+              initializationErrors.push(message.error);
+              // Let a broken implementation finish so the assertion reports the rejected admission.
+              retentionClock.advance(retentionClock.ttlMs);
+            } else if (
+              "result" in message &&
+              typeof message.result === "object" &&
+              message.result !== null &&
+              "sessionId" in message.result &&
+              typeof message.result.sessionId === "string"
+            ) {
+              if (initialSessionId === undefined) initialSessionId = message.result.sessionId;
+              else
+                admission = {
+                  sessionId: message.result.sessionId,
+                  previousSessionId: initialSessionId,
+                  admittedAt: retentionClock.now,
+                  retainedUntil,
+                };
+            }
+          }
           if ("method" in message && message.method.startsWith("process/"))
             execWire.push({ direction: "out", message });
           return send(message);
@@ -147,7 +178,6 @@ export class Host extends DurableObject<Env> {
       detach ??= () => {
         if (!disconnectExec) return;
         outage = true;
-        execWire.push({ direction: "detached", elapsed: now() - startedAt });
         connection.disconnect(1011, "Fixture host transport outage");
       };
       return {
@@ -158,8 +188,14 @@ export class Host extends DurableObject<Env> {
         receive(text) {
           const message = JSON.parse(text);
           if (provider === "reconnect") {
-            if (message.method === "initialize")
-              execWire.push({ direction: "in", message, elapsed: now() - startedAt });
+            if (message.method === "initialize") {
+              initializeId = message.id;
+              execWire.push({ direction: "in", message });
+              if (outage && !message.params?.resumeSessionId) {
+                retainedUntil = retentionClock.nextDeadline;
+                retentionClock.advance(1);
+              }
+            }
             // Keep recovery offline until Codex gives up; its next fresh connection can reach the host.
             if (outage && message.method === "initialize" && message.params?.resumeSessionId) {
               connection.disconnect(1011, "Fixture host transport outage");
@@ -305,7 +341,7 @@ export class Host extends DurableObject<Env> {
             provider === "reconnect" ? "reconnect-test" : auth?.secret,
             provider === "reconnect" ? { beforeFirstTurn: () => detach?.() } : undefined,
           )),
-          ...(provider === "reconnect" ? { execWire, finishedAtMs: now() - startedAt } : {}),
+          ...(provider === "reconnect" ? { execWire, initializationErrors, admission } : {}),
           authentication:
             auth === undefined
               ? null
