@@ -8,6 +8,7 @@ import * as NodeUtil from "node:util";
 import { build } from "esbuild";
 import { encodeAssetBundle, PROGRAM_BUNDLE_CONTENT_TYPE } from "../claudeTurnProof/assetBundle.ts";
 import { prepareBasicChildPrograms } from "../childPrograms/basic.ts";
+import { CODEX_WASI_RELEASE } from "../codexTurn/release.ts";
 import type { CodexExecCommandExpectation } from "./CodexHooksProof.ts";
 // @ts-expect-error The existing MJS packager has no declaration; the local type below narrows its API.
 import { createCodexFixture as createCodexFixtureUntyped } from "../codexTurn/fixturePackager.mjs";
@@ -31,7 +32,7 @@ const createCodexFixture = createCodexFixtureUntyped as unknown as (
   options: CodexFixturePackagerOptions,
 ) => Promise<CodexFixturePackage>;
 
-const RELEASE_MANIFEST_SHA256 = "bfa4263733024c07900c856b7ff17a6e6b664fc4dd5eaad54065532f34c1b91b";
+const RELEASE_MANIFEST_SHA256 = CODEX_WASI_RELEASE.files["manifest.json"].sha256;
 const proofRoot = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const currentKernelRoot = NodePath.resolve(proofRoot, "../../src/kernel");
 const digest = (bytes: Uint8Array | string) =>

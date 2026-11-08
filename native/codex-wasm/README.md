@@ -64,3 +64,28 @@ internally and verifies module inventory and version responses. CI builds both t
 The fixture's `/version` route instantiates the fully linked engine and executes `--version`.
 That proves artifact loading and execution, not an agent turn. The fixture hosts reject calls outside that narrow proof. Full mock-model turns,
 resume, tools, MCP and interruption belong to #1069 and the #1072 release replay.
+
+## Pinned product proof
+
+The hooks packager and native ProductComputer CodeMode test share the release pin in
+[`release.ts`](../../apps/cloud/infra/codexTurn/release.ts). The public artifact comes from
+[`kernel-programs-20261108-codex-33e30977`](https://github.com/JustYannicc/signalbox/releases/tag/kernel-programs-20261108-codex-33e30977).
+Its notes record the source, builder, toolchain and manifest hash. The downloader verifies
+the size and SHA-256 of the manifest, engine, loader and Cargo.lock.
+
+From the repository root, use fresh directories outside the checkout:
+
+```sh
+proof_root=$(mktemp -d)
+node apps/cloud/infra/codexTurn/fetchRelease.ts --output "$proof_root/release"
+heavy-slot node scripts/harness-releases/fetchProductPrograms.ts --output "$proof_root/programs"
+SIGNALBOX_CODE_MODE_RELEASE_DIR="$proof_root/release" \
+SIGNALBOX_CODE_MODE_PROGRAM_DIR="$proof_root/programs" \
+heavy-slot vp test run apps/cloud/src/harness/tests/ProductCodexCodeMode.workerd.test.ts
+```
+
+The program preparer needs Docker to build the two programs absent from public releases.
+Signalbox CI fetches and caches these same inputs, then runs this test once in `cloud-1`
+before the ordinary cloud shards. The test fails when either input is missing or its
+artifact pins disagree. Its bootstrap enables `host_capabilities.standard_form_input`,
+so an engine that rejects the current protocol cannot pass the native turn.

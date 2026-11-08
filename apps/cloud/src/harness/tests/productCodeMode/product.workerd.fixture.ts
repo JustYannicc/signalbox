@@ -181,6 +181,7 @@ export class Host extends DurableObject<Env> {
         },
         bootstrap: {
           type: "bootstrap",
+          host_capabilities: { standard_form_input: true },
           codex_home: "/home/codex/.codex",
           cwd: "/work",
           overrides: {

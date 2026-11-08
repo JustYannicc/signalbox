@@ -145,6 +145,7 @@ export default {
         "infra/codexExecProof/prepareExecution.ts",
         "infra/codexExecProof/prepareFileSystem.ts",
         "infra/codexTurn/prepareFixture.mjs",
+        "infra/codexTurn/fetchRelease.ts",
         "infra/codexTurn/ModelProofHost.mjs", // Deployed proof tooling loads this entry by filename.
         "infra/codexTurn/ProofFacet.mjs", // Loaded by the generated Codex proof entry.
         "infra/codexTurn/BashPrograms.mjs", // Loaded by the generated turn proof entry.
