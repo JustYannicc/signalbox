@@ -20,6 +20,11 @@ export const RELEASE_MANIFESTS = Object.freeze([
     bytes: 7_265,
     sha256: "eefbaeac35faca9f993bc13e392a49412f3585c7abb16db7a27f21f0aff92ac5",
   },
+  {
+    tag: "kernel-programs-20261108-product-87c054c0-fa08b364",
+    bytes: 1_177,
+    sha256: "5985a480d4bcdb6a50c3daa0c233c4405835cfa7e21ddda3f874873feb61b785",
+  },
 ]);
 const RELEASE_ASSET_TAGS = Object.freeze({
   bash: "kernel-programs-20261022-c3e8dc79-791b862a",
@@ -28,6 +33,8 @@ const RELEASE_ASSET_TAGS = Object.freeze({
   coreutils: "kernel-programs-20261023-6aefd645-2d079609",
   ugrep: "kernel-programs-20261107-ugrep-365188e3",
   sed: "kernel-programs-20261023-sed-40c8bb93",
+  git: "kernel-programs-20261108-product-87c054c0-fa08b364",
+  productBusybox: "kernel-programs-20261108-product-87c054c0-fa08b364",
 });
 const RELEASED_PROGRAMS = Object.freeze([
   { manifest: 0, name: "bash", output: "bash.wasm", provenance: "bash.provenance.json" },
@@ -41,6 +48,13 @@ const RELEASED_PROGRAMS = Object.freeze([
   },
   { manifest: 0, name: "ugrep", output: "ugrep.wasm", provenance: "ugrep.provenance.json" },
   { manifest: 1, name: "sed", output: "sed.wasm", provenance: "sed.provenance.json" },
+  { manifest: 2, name: "git", output: "git.wasm", provenance: "git.provenance.json" },
+  {
+    manifest: 2,
+    name: "productBusybox",
+    output: "product-busybox.wasm",
+    provenance: "product-busybox.provenance.json",
+  },
 ]);
 
 export async function fetchPinned(

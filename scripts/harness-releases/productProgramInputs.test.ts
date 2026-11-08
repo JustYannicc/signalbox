@@ -87,6 +87,12 @@ it("checks fetched bytes against their published size and digest", async () => {
     "PRODUCT_PROGRAM_HASH_MISMATCH:asset",
   );
   await expect(
+    fetchPinned(async () => new Response(new Uint8Array(bytes.length)), pin, "asset"),
+  ).rejects.toThrow("PRODUCT_PROGRAM_HASH_MISMATCH:asset");
+  await expect(
+    fetchPinned(async () => new Response(null, { status: 404 }), pin, "asset"),
+  ).rejects.toThrow("PRODUCT_PROGRAM_DOWNLOAD_FAILED:asset:404");
+  await expect(
     fetchPinned(async () => new Response(new Uint8Array(bytes.length + 1)), pin, "asset"),
   ).rejects.toThrow("PRODUCT_PROGRAM_DOWNLOAD_TOO_LARGE:asset");
 });

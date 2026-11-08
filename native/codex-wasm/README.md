@@ -84,9 +84,8 @@ SIGNALBOX_CODE_MODE_PROGRAM_DIR="$proof_root/programs" \
 heavy-slot vp test run apps/cloud/src/harness/tests/ProductCodexCodeMode.workerd.test.ts
 ```
 
-The program preparer needs Docker to build the two programs absent from public releases.
-Signalbox CI fetches and caches these same inputs on ARM64, as required by the two
-unpublished program recipes, then runs this test once in `cloud-1`
+The program preparer downloads hash-pinned WASM artifacts; it needs no compiler or Docker.
+Signalbox CI fetches and caches these same inputs, then runs this test once in `cloud-1`
 before the ordinary cloud shards. The test fails when either input is missing or its
 artifact pins disagree. Its bootstrap enables `host_capabilities.standard_form_input`,
 so an engine that rejects the current protocol cannot pass the native turn.
