@@ -29,7 +29,7 @@ export async function downloadRelease<T>(
     address: string,
     consume: (response: Response) => Promise<R>,
     until: number,
-    headers?: HeadersInit,
+    headers?: Record<string, string>,
     attempts = 4,
   ): Promise<R> {
     for (let attempt = 0; attempt < attempts; attempt++) {

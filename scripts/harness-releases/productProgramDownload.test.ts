@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off - Vitest's fake clock measures native download deadlines outside an Effect runtime.
 import * as NodeCrypto from "node:crypto";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { fetchPinned } from "./productProgramAssets.ts";
