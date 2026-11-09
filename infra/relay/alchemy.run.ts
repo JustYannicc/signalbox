@@ -23,7 +23,7 @@ export default Alchemy.Stack(
       Drizzle.providers(),
       Planetscale.providers(),
     ),
-    state: Cloudflare.state(),
+    state: (await import("../signalboxStateStore.ts")).signalboxStateStore(),
   },
   Effect.gen(function* () {
     const db = yield* RelayDb.PlanetscaleDatabase;

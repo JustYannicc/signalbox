@@ -4,13 +4,6 @@ import ts from "typescript-legacy";
 
 import { VENDORED_ROOTS } from "./upstream.mjs";
 
-const SHARED_STATE_STACKS = new Set([
-  "apps/cloud/alchemy.run.ts",
-  // Upstream production stack: shares the v8 exposure. Keep its workflow disabled
-  // until the fork's package/config fix covers both production stacks.
-  "infra/relay/alchemy.run.ts",
-]);
-
 export function sharedCloudflareStateCalls(file, source) {
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const namespaces = new Set();
@@ -72,8 +65,7 @@ export function checkAlchemyState(
     if (
       file.startsWith(".repos/") ||
       VENDORED_ROOTS.some((prefix) => file.startsWith(prefix)) ||
-      !/\.[cm]?[jt]sx?$/.test(file) ||
-      SHARED_STATE_STACKS.has(file)
+      !/\.[cm]?[jt]sx?$/.test(file)
     )
       return [];
     const source = readSource(file);
@@ -81,7 +73,7 @@ export function checkAlchemyState(
       return [];
     return sharedCloudflareStateCalls(file, source).map(
       (line) =>
-        `${file}:${line}: disposable stacks must use Alchemy.localState(); Cloudflare.state() can downgrade the account's shared state-store Worker`,
+        `${file}:${line}: Cloudflare.state() is forbidden; disposable stacks must use Alchemy.localState(), and production stacks need a Signalbox-owned state store`,
     );
   });
 }
