@@ -58,11 +58,11 @@ views {
       platform.boxd
 
     opt 'recipe predicts escalation' {
-      signalbox.computer.vmLifecycle -> platform.boxd 'pre-fork from Base' {
+      signalbox.computer.vmLifecycle -> platform.boxd 'pre-fork from snapshot' {
         navigateTo work_computer_escalate
         notes '''
-          - Starts while the model is still thinking, so warm-Base latency hides
-          - Base lease first, then the fork; same path as the cold fork below
+          - Starts while the model is still thinking, so warm-snapshot latency hides
+          - Snapshot lease first, then the fork; same path as the cold fork below
         '''
       }
     }
@@ -96,11 +96,11 @@ views {
         }
       }
       else 'none' {
-        signalbox.computer.vmLifecycle -> signalbox.bases 'acquire Base lease' {
+        signalbox.computer.vmLifecycle -> signalbox.bases 'acquire snapshot lease' {
           navigateTo work_bases_lease
           notes '- Lease expires at the VM\'s `deleteAfter`, so no hold is orphaned'
         }
-        signalbox.computer.vmLifecycle -> platform.boxd 'fork from Base' {
+        signalbox.computer.vmLifecycle -> platform.boxd 'fork from snapshot' {
           navigateTo state_computer
           notes '''
             - `t-{threadId}-g{gen}`; isolated, egress allowlist, dead-port public proxy, `deleteAfter`
@@ -113,10 +113,10 @@ views {
       navigateTo lifecycle_file_sync
       notes '''
         - Source and kept-local changes since the last sync
-        - `.git` arrives read-only; regenerable paths are already there from the Base
+        - `.git` arrives read-only; regenerable paths are already there from the snapshot
       '''
     }
-    opt 'lockfile differs from the Base' {
+    opt 'lockfile differs from the snapshot' {
       signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'prepare' {
         notes '- The recipe\'s lockfile-diff install, before the command'
       }
@@ -167,7 +167,7 @@ views {
     }
     signalbox.computer.vmLifecycle -> platform.boxd 'delete VM' {
       notes '''
-        - Only regenerable state is lost; it resets to the Base next time
+        - Only regenerable state is lost; it resets to the snapshot next time
         - Also at archive, or when `deleteAfter` fires after H hours hibernated
       '''
     }
@@ -333,7 +333,7 @@ views {
         }
       }
       else 'deleted (settle · archive · H hours)' {
-        signalbox.computer.vmLifecycle -> platform.boxd 'fork fresh from Base' {
+        signalbox.computer.vmLifecycle -> platform.boxd 'fork fresh from snapshot' {
           navigateTo lifecycle_tool_needs_vm
         }
         signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'rerun start command' {
@@ -369,7 +369,7 @@ views {
     description '''
       Person A messages a thread that has been dormant for a day. What wakes, and in what order? The Thread
       DO wakes, the harness resumes from the session mirror, files hydrate on read from the fork (back from
-      R2 if it was evicted), and the first heavy command forks a fresh VM from today's Base.
+      R2 if it was evicted), and the first heavy command forks a fresh VM from today's snapshot.
     '''
 
     include
@@ -415,14 +415,14 @@ views {
     signalbox.computer.backend.kernelFs -> signalbox.harness 'file' {
       notes '''
         - A normal read, a bit slower the first time
-        - node_modules reads hydrate from the Base\'s chunks in R2; a read never forks a VM
+        - node_modules reads hydrate from the snapshot\'s chunks in R2; a read never forks a VM
       '''
     }
     signalbox.harness -> signalbox.computer.backend.kernelFs 'exec(npm test)'
     signalbox.computer.backend.kernelFs -> signalbox.computer.vmLifecycle 'escalate argv'
-    signalbox.computer.vmLifecycle -> signalbox.bases 'lease current Base' {
+    signalbox.computer.vmLifecycle -> signalbox.bases 'lease current snapshot' {
       navigateTo work_bases_lease
-      notes '- Today\'s Base, not the one the thread used yesterday'
+      notes '- Today\'s snapshot, not the one the thread used yesterday'
     }
     signalbox.computer.vmLifecycle -> platform.boxd 'fork fresh VM' {
       notes '- Nothing to resume: yesterday\'s VM was deleted'
@@ -447,7 +447,7 @@ views {
     description '''
       Person A forks a thread. What does the child get, and what stays with the parent? The parent saves first,
       the Drive forks at that exact commit, and the child gets its own computer with an empty live FS that
-      hydrates on read. No VM is copied: the child forks its own from the Base if it ever needs one.
+      hydrates on read. No VM is copied: the child forks its own from the snapshot if it ever needs one.
     '''
 
     include
@@ -493,10 +493,10 @@ views {
     }
     opt 'child runs a heavy command' {
       signalbox.harness -> signalbox.computer 'exec(npm test)'
-      signalbox.computer -> signalbox.bases 'lease Base'
+      signalbox.computer -> signalbox.bases 'lease snapshot'
       signalbox.computer -> platform.boxd 'fork child VM' {
         navigateTo lifecycle_tool_needs_vm
-        notes '- Its own `t-{childId}-g1`, from the Base, never from the parent\'s VM'
+        notes '- Its own `t-{childId}-g1`, from the snapshot, never from the parent\'s VM'
       }
     }
     hier.company.team.sharedThread -> hier.company.team.sharedThread 'keeps its VM' {
@@ -641,7 +641,7 @@ views {
       navigateTo state_thread
     }
     signalbox.computer.vmLifecycle -> platform.boxd 'delete VM' {
-      notes '- Release the Base lease; only regenerable state is lost'
+      notes '- Release the snapshot lease; only regenerable state is lost'
     }
     signalbox.automations -> signalbox.computer.backend.kernelFs 'idle live-FS eviction' {
       notes '''
@@ -671,7 +671,7 @@ views {
     title 'Workflows/Lifecycle/Where each file lives'
     description '''
       Where does each path class live, and how does it move? Source and kept-local files live in the live FS
-      until the turn-end commit; regenerable files (node_modules, dist, caches) belong to the VM and the Base,
+      until the turn-end commit; regenerable files (node_modules, dist, caches) belong to the VM and the snapshot,
       with only a manifest in the isolate. While a command runs on the VM, the last write per path wins.
     '''
 
@@ -725,8 +725,8 @@ views {
         }
       }
       else 'no VM' {
-        signalbox.computer.backend.kernelFs -> platform.r2 'Base chunks' {
-          notes '- The Base\'s content-addressed chunk set; a read never forks a VM'
+        signalbox.computer.backend.kernelFs -> platform.r2 'Snapshot chunks' {
+          notes '- The snapshot\'s content-addressed chunk set; a read never forks a VM'
         }
       }
     }
@@ -767,7 +767,7 @@ views {
     description '''
       What do we keep on machines, and what do archive and trash do to it? Nothing but cache: a VM's default
       100 GB disk holds regenerable files, source comes back after every command and before every hibernate,
-      and Bases are snapshots that belong to the drive. Archive deletes the VM at once; trash also drops the
+      and snapshots belong to the drive. Archive deletes the VM at once; trash also drops the
       hot fork; restore needs no VM.
     '''
 
@@ -782,10 +782,10 @@ views {
       platform.boxd,
       platform.r2
 
-    signalbox.computer.vmLifecycle -> platform.boxd 'fork from Base' {
+    signalbox.computer.vmLifecycle -> platform.boxd 'fork from snapshot' {
       navigateTo work_bases_lease
       notes '''
-        - We use machines (create, fork, hibernate, resume, delete) and named Base snapshots per drive and recipe
+        - We use machines (create, fork, hibernate, resume, delete) and named snapshots per drive and recipe
         - The default 100 GB disk is cache only; mounted disks are an open option, not decided
       '''
     }
@@ -829,7 +829,7 @@ views {
         platform.boxd -> platform.boxd 'deleteAfter fires' {
           notes '''
             - H is not decided yet
-            - The Base lease expires with it (`expiresAt` = `deleteAfter`)
+            - The snapshot lease expires with it (`expiresAt` = `deleteAfter`)
           '''
         }
       }
@@ -848,18 +848,18 @@ views {
       notes '- Purge workers remove the fork and the kept-local ref'
     }
     signalbox.thread.threadActor -> signalbox.computer.vmLifecycle 'purge machine' {
-      notes '- The machine by name, and its Base lease'
+      notes '- The machine by name, and its snapshot lease'
     }
     opt 'restore within 30 days' {
       personA -> signalbox.thread.threadActor 'restore'
       signalbox.drive -> platform.r2 'fork back from R2' {
         navigateTo work_drive_eviction
-        notes '- No VM needed; the next heavy command forks fresh from the Base'
+        notes '- No VM needed; the next heavy command forks fresh from the snapshot'
       }
     }
     signalbox.drive -> signalbox.bases 'drive trashed' {
       notes '''
-        - A trashed or deleted folder or drive releases its Base leases
+        - A trashed or deleted folder or drive releases its snapshot leases
         - Snapshots retire at zero leases; cleanup mechanics are deferred
       '''
     }

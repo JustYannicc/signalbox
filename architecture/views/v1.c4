@@ -18,7 +18,7 @@ views {
       - Feedback and analytics go to our own projects.
 
       Not in this release: folders, admin roles, organizations beyond the sharing boundary, domain auto-join,
-      API keys in pools, shared tools, Codex computer history, threads, harness runtime, computer, Bases,
+      API keys in pools, shared tools, Codex computer history, threads, harness runtime, computer, Snapshots,
       drive, assistant, automations.
 
       Walk it end to end in `Workflows / Basalt` (click a box to open its step).

@@ -722,7 +722,7 @@ views {
             notes 'Working ref pushed as a fresh fork of the destination drive (hot tier)'
           }
           signalbox.thread.threadActor -> signalbox.bases 'release leases' {
-            notes 'The old folder’s Base leases go; the next VM forks the destination’s Base'
+            notes 'The old folder’s snapshot leases go; the next VM forks the destination’s snapshot'
           }
         }
         opt 'rebase cannot apply (W-LIF-03)' {
@@ -838,7 +838,7 @@ views {
       signalbox.thread.threadActor -> signalbox.computer 'drop machine' {
         notes '''
           - VM deleted by its deterministic name, so a lost reply never orphans one
-          - Base lease released
+          - Snapshot lease released
         '''
       }
     }

@@ -40,7 +40,7 @@ model {
       }
       defaults = part 'Default automations' {
         icon bootstrap:ui-checks
-        description 'git-host sync · CI on Base · Base refresh · merge gate · reconcile · …'
+        description 'git-host sync · CI on snapshot · snapshot refresh · merge gate · reconcile · …'
       }
       triggers = part 'Triggers' {
         icon tech:webhooks

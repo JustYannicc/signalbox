@@ -298,7 +298,7 @@ views {
       signalbox.funnel -> signalbox.tree 'Tree.view' {
         notes """
           - Placements, access and people; inherited rows show as 'from <level>'
-          - Sections: Pool, Connections, Sources, Secrets, Skills, AGENTS.md, Automations, Base, Members, Policy, Newcomers, Notes
+          - Sections: Pool, Connections, Sources, Secrets, Skills, AGENTS.md, Automations, Snapshot, Members, Policy, Newcomers, Notes
         """
       }
       signalbox.funnel -> signalbox.models 'pool section' {
@@ -343,7 +343,7 @@ views {
       else 'C (Admin)' {
         personC -> signalbox.web 'edits admin areas' {
           notes """
-            - Admin-only by default: Base, Policy, Newcomers, Members, pool accounts and activity
+            - Admin-only by default: Snapshot, Policy, Newcomers, Members, pool accounts and activity
           """
         }
       }

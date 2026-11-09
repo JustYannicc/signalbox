@@ -1,6 +1,6 @@
 model {
   extend signalbox {
-    bases = module 'Bases' {
+    bases = module 'Snapshots' {
       #shallow #publishable
       icon bootstrap:layers
       description 'acquire · release · build · status · promote · retire'
@@ -10,7 +10,7 @@ model {
         deletion 'Computer, CI and the folder page each invent snapshot lifecycles'
       }
 
-      api = iface 'Bases · interface' {
+      api = iface 'Snapshots · interface' {
         description '6 verbs: acquire · release · build · status · promote · retire'
         technology 'Deletion test: without it, Computer, CI and the folder page each invent snapshot lifecycles'
       }

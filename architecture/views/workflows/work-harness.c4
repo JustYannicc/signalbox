@@ -485,7 +485,7 @@ views {
       navigateTo work_computer_escalate
       notes '''
         - Idempotent, one computer per thread: the kernel live FS, **no VM**
-        - A machine (forked from the warm Base) appears later only if a command needs a real machine
+        - A machine (forked from the warm snapshot) appears later only if a command needs a real machine
       '''
     }
     signalbox.thread -> signalbox.actorhost 'facet(thread)' {
@@ -983,7 +983,7 @@ views {
         }
         signalbox.automations -> signalbox.harness 'build and test' {
           notes '''
-            - The build and test commands run on a machine forked from the warm Base
+            - The build and test commands run on a machine forked from the warm snapshot
             - The output is an isolate build (isolate code) plus a green parity suite, never a VM image
           '''
         }

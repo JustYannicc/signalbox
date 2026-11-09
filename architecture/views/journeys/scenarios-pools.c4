@@ -1185,7 +1185,7 @@ views {
     }
     signalbox.harness -> signalbox.computer 'Run commands' {
       navigateTo work_computer_usage_metering
-      notes "- A machine, forked from a warm Base, only while real commands run"
+      notes "- A machine, forked from a warm snapshot, only while real commands run"
     }
     signalbox.computer -[async]-> signalbox.thread.threadActor 'Measured time'
     signalbox.thread.threadActor -[async]-> signalbox.models 'Compute row to P1' {

@@ -1,0 +1,43 @@
+// Apps decided after Basalt's first release that have no module yet: the Goals app (#1511) and the first
+// captured workflow, a personal routine (#1507). Both are apps on the tools service, built from connectors.
+// The pool app (Models), browser app (Browser) and hierarchy app (Tree) already exist as modules.
+model {
+  extend signalbox {
+    goals = app 'Goals' {
+      #planned
+      icon bootstrap:bullseye
+      description 'goals · branches · base'
+      technology 'tools service app · report tool'
+      goal = record 'Goal' {
+        description 'where a person is heading'
+      }
+      branch = record 'Branch' {
+        description 'alias mission · points at work elsewhere'
+      }
+      report = record 'Report' {
+        description 'working · needs you · blocked · done'
+      }
+      base = record 'Base' {
+        description 'the status quo · changes only by merge'
+      }
+
+      branch -> goal 'serves'
+      branch -[owns]-> report 'reports'
+      branch -> base 'merges into'
+    }
+
+    routine = app 'Personal routine' {
+      #planned
+      icon bootstrap:arrow-repeat
+      description 'captured workflow'
+      technology 'tools service workflow'
+    }
+  }
+
+  signalbox.gateway.toolGateway -[tool]-> signalbox.goals.report 'report'
+  signalbox.ingress -> signalbox.goals.report 'webhook'
+  signalbox.routine -> signalbox.goals.report 'report'
+  signalbox.routine -> signalbox.goals.base 'fills'
+  signalbox.goals.report -[async]-> hier.lanesA 'needs you'
+  personA -> signalbox.routine 'does its steps'
+}

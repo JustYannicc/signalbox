@@ -58,7 +58,7 @@ views {
     description '''
       What does Thread offer, hide and plug in?
 
-      Verdict: deep: 3 verbs (send · watch · read) hide the engine, run queue, sagas, parking and keep-alive behind one Thread actor. No seams; neighbours are reached through their interfaces. Capture and Bases also start threads; they are left out to keep the picture readable.
+      Verdict: deep: 3 verbs (send · watch · read) hide the engine, run queue, sagas, parking and keep-alive behind one Thread actor. No seams; neighbours are reached through their interfaces. Capture and Snapshots also start threads; they are left out to keep the picture readable.
     '''
     include *
     include * -> signalbox.thread, signalbox.thread -> *
@@ -98,9 +98,9 @@ views {
     autoLayout TopBottom
   }
   view m-bases of signalbox.bases {
-    title 'Modules/Bases'
+    title 'Modules/Snapshots'
     description '''
-      What does Bases offer, hide and plug in?
+      What does Snapshots offer, hide and plug in?
 
       Verdict: shallow: 6 verbs over a thin lease and pointer layer. `acquire(drive, recipeHash, operationId)` is idempotent on operationId; the caller persists the intent first and leases expire at the VM's deleteAfter horizon, so no hold is orphaned (#1217). The Snapshot seam has two adapters: None (cold create, ships with #1071) and machine snapshots.
     '''

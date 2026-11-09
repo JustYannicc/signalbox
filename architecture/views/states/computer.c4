@@ -4,7 +4,7 @@
 model {
   smVm = state 'Machine lifecycle' {
     none = state 'No VM' { description 'harness and files in the session facet · no machine' }
-    creating = state 'Creating' { description 'forking the warm Base · idempotent by name' }
+    creating = state 'Creating' { description 'forking the warm snapshot · idempotent by name' }
     configuring = state 'Configuring' { description 'isolated · egress allowlist · deleteAfter' }
     attached = state 'Warm' { description 'one command, or the agent\'s own process while it is active' }
     hibernated = state 'Hibernated' { description 'memory on disk · process frozen · disk billed only' }

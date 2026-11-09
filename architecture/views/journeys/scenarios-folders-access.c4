@@ -9,7 +9,7 @@ views {
   dynamic view scn_055_outside_collaborator_invited_to_team {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Invites/Outside Collaborator Into Team'
+    title 'Apps/Hierarchy/Scenarios/Invites/Outside Collaborator Into Team'
     description '''
       Can someone outside the organization get folder Team without seeing the rest of folder Company?
 
@@ -101,7 +101,7 @@ views {
   dynamic view scn_058_invite_reverse_doors {
     #decided
     variant sequence
-    title 'Scenarios/Folders/Invites/Invite Reverse Doors'
+    title 'Apps/Hierarchy/Scenarios/Invites/Invite Reverse Doors'
     description '''
       How does every invite or membership get undone without leaving a stale accept or an orphan reference?
 
@@ -190,7 +190,7 @@ views {
   dynamic view scn_056_outside_collaborator_thread_chain {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Chains/Outside Collaborator Chain'
+    title 'Apps/Hierarchy/Scenarios/Chains/Outside Collaborator Chain'
     description '''
       When an outside collaborator starts a thread in folder Team, which chain does it run on?
 
@@ -272,7 +272,7 @@ views {
   dynamic view scn_057_refile_mount_or_reference {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/References/Refile Mount Or Reference'
+    title 'Apps/Hierarchy/Scenarios/References/Refile Mount Or Reference'
     description '''
       What changes when someone refiles folder Company, or another organization's shared folder, elsewhere in their tree?
 
@@ -357,7 +357,7 @@ views {
   dynamic view scn_059_door_model_ask_folder {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Requests/Ask A Folder For Work'
+    title 'Apps/Hierarchy/Scenarios/Requests/Ask A Folder For Work'
     description '''
       What happens when an organization member with no role on folder Payments asks it for work?
 
@@ -420,7 +420,7 @@ views {
   dynamic view scn_060_admin_restricts_area {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Roles/Admin Restricts An Area'
+    title 'Apps/Hierarchy/Scenarios/Roles/Admin Restricts An Area'
     description '''
       Can an admin make the Connections area of folder Company admin-only?
 
@@ -488,7 +488,7 @@ views {
   dynamic view scn_067_promoted_or_demoted {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Roles/Promoted Or Demoted'
+    title 'Apps/Hierarchy/Scenarios/Roles/Promoted Or Demoted'
     description '''
       What happens when someone is made Admin, demoted, or loses an extra folder grant?
 
@@ -559,7 +559,7 @@ views {
   dynamic view scn_061_start_folder_from_existing {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Forks/Start Folder From Here'
+    title 'Apps/Hierarchy/Scenarios/Forks/Start Folder From Here'
     description '''
       Where does a new folder started from folder Team land, and what does it share?
 
@@ -622,7 +622,7 @@ views {
   dynamic view scn_062_share_big_old_folder {
     #decided
     variant sequence
-    title 'Scenarios/Folders/Sharing/Share A Big Old Folder'
+    title 'Apps/Hierarchy/Scenarios/Sharing/Share A Big Old Folder'
     description '''
       Can a huge folder with years of history be shared without anything failing on size?
 
@@ -681,7 +681,7 @@ views {
   dynamic view scn_066_friend_group_personal_folder {
     #decided
     variant sequence
-    title 'Scenarios/Folders/Sharing/Friend Group Folder'
+    title 'Apps/Hierarchy/Scenarios/Sharing/Friend Group Folder'
     description '''
       How do friends work in a personal folder, and who pays?
 
@@ -749,7 +749,7 @@ views {
   dynamic view scn_063_message_from_profile_card {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/People/Message From Profile Card'
+    title 'Apps/Hierarchy/Scenarios/People/Message From Profile Card'
     description '''
       What does "Message B" on a profile card create, and where?
 
@@ -811,7 +811,7 @@ views {
   dynamic view scn_064_room_between_assistants {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Assistants/Room Between Assistants'
+    title 'Apps/Hierarchy/Scenarios/Assistants/Room Between Assistants'
     description '''
       How does A's assistant get something from B's assistant without B losing control?
 
@@ -876,7 +876,7 @@ views {
   dynamic view scn_065_ask_up_for_out_of_reach {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Assistants/Ask Up Out Of Reach'
+    title 'Apps/Hierarchy/Scenarios/Assistants/Ask Up Out Of Reach'
     description '''
       What does an agent in folder Team do when what it needs isn't placed on its chain?
 

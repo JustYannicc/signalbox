@@ -15,7 +15,7 @@ model {
 }
 views {
   view state-loan of smLoan {
-    title 'States/Loan/State machine'
+    title 'Apps/Hierarchy/States/Loan/State machine'
     description 'How does one loan into a folder the lender does not own start and end? Start: green. End: gray. Click the frame for the walk with people and modules (state_loan).'
     include *
     include smLoan with { navigateTo state_loan }

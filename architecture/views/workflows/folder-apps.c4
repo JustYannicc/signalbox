@@ -10,7 +10,7 @@ views {
 
   dynamic view apps_story {
     variant sequence
-    title 'Workflows/Folders/Apps/A team folder gets its own app'
+    title 'Apps/Hierarchy/Workflows/Apps/A team folder gets its own app'
     description 'Folder apps (#485, correction 18): the whole life of the Team dashboard, one step per sub-flow.'
 
     include personB, personA, personC, hier, hier.company.team.sharedThread, hier.company.team.agentTeam, signalbox, signalbox.tree, signalbox.apps, signalbox.web
@@ -66,7 +66,7 @@ views {
 
   dynamic view apps_build {
     variant sequence
-    title 'Workflows/Folders/Apps/Build an app in a folder'
+    title 'Apps/Hierarchy/Workflows/Apps/Build an app in a folder'
     description "Folder apps (#485): an agent builds the Team dashboard from a thread and it lands in the thread's folder as release v1."
 
     include personB, hier, hier.company.team.sharedThread, signalbox, signalbox.harness, signalbox.drive, signalbox.tree, signalbox.apps
@@ -142,7 +142,7 @@ views {
 
   dynamic view apps_place {
     variant sequence
-    title 'Workflows/Folders/Apps/Place, move or widen an app'
+    title 'Apps/Hierarchy/Workflows/Apps/Place, move or widen an app'
     description 'Folder apps (#485): an app has one home and a reach, like an automation; moving it changes who sees it and which agents can call it.'
 
     include personC, personB, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.apps, signalbox.search
@@ -192,7 +192,7 @@ views {
 
   dynamic view apps_open {
     variant sequence
-    title 'Workflows/Folders/Apps/Open an app'
+    title 'Apps/Hierarchy/Workflows/Apps/Open an app'
     description 'Folder apps (#485): a member opens the Team dashboard; the sandboxed frame reaches only its own server; visibility by hierarchy for A, B, C and D.'
 
     include personA, personD, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.tree, signalbox.apps
@@ -263,7 +263,7 @@ views {
 
   dynamic view apps_agent_calls {
     variant sequence
-    title 'Workflows/Folders/Apps/An agent works inside an app'
+    title 'Apps/Hierarchy/Workflows/Apps/An agent works inside an app'
     description 'Folder apps (#485): agents call the same server methods as the UI, resolved by hierarchy like connections; open frames update live.'
 
     include personB, hier, hier.company.agentCo, hier.company.team.sharedThread, signalbox, signalbox.harness, signalbox.tree, signalbox.gateway, signalbox.operations, signalbox.apps
@@ -323,7 +323,7 @@ views {
 
   dynamic view apps_bindings {
     variant sequence
-    title 'Workflows/Folders/Apps/Give an app a binding'
+    title 'Apps/Hierarchy/Workflows/Apps/Give an app a binding'
     description 'Folder apps (#485): the app reaches a service only through a binding someone granted; everything else fails closed.'
 
     include personC, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.apps, signalbox.gateway, signalbox.connections, services.google
@@ -379,7 +379,7 @@ views {
 
   dynamic view apps_release {
     variant sequence
-    title 'Workflows/Folders/Apps/Update or roll back an app'
+    title 'Apps/Hierarchy/Workflows/Apps/Update or roll back an app'
     description "Folder apps (#485): immutable releases, atomic activation, one-click rollback; data stays in the app's SQLite."
 
     include personB, personA, hier, hier.company.team.sharedThread, signalbox, signalbox.web, signalbox.funnel, signalbox.harness, signalbox.drive, signalbox.apps
@@ -435,7 +435,7 @@ views {
 
   dynamic view apps_share {
     variant sequence
-    title 'Workflows/Folders/Apps/Share, lend or publish an app'
+    title 'Apps/Hierarchy/Workflows/Apps/Share, lend or publish an app'
     description 'Folder apps (#485): shared by folder roles, lent into another folder, or published as a template (code and binding shapes, never data).'
 
     include personC, personA, signalbox, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.marketplace, signalbox.drive, signalbox.apps
@@ -503,7 +503,7 @@ views {
 
   dynamic view apps_remove {
     variant sequence
-    title 'Workflows/Folders/Apps/Remove, restore or purge an app'
+    title 'Apps/Hierarchy/Workflows/Apps/Remove, restore or purge an app'
     description 'Folder apps (#485): removing goes to the 30-day trash with its data; a purge deletes data and releases; templates never held data.'
 
     include personC, hier.company.team.agentTeam, signalbox.web, signalbox.funnel, signalbox.operations, signalbox.tree, signalbox.apps
