@@ -22,15 +22,16 @@ NodeTest.test("disposable infra and proof stacks cannot bootstrap account state"
   );
 });
 
-NodeTest.test("only the two explicit production stacks are exempt", () => {
+NodeTest.test("production and relay stacks cannot bootstrap shared state either", () => {
   const files = [
     "apps/cloud/alchemy.run.ts",
     "infra/relay/alchemy.run.ts",
     "infra/other-production/alchemy.run.ts",
   ];
-  const errors = checkAlchemyState("unused", files, () => sharedState);
-  NodeAssert.equal(errors.length, 1);
-  NodeAssert.match(errors[0], /^infra\/other-production\/alchemy.run.ts:2:/);
+  NodeAssert.deepEqual(
+    checkAlchemyState("unused", files, () => sharedState).map((message) => message.split(":")[0]),
+    files,
+  );
 });
 
 NodeTest.test("aliases and multiline calls are caught without matching comments or strings", () => {

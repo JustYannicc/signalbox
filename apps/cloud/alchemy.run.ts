@@ -130,7 +130,7 @@ export default Alchemy.Stack(
   "SignalboxCloud",
   {
     providers: Cloudflare.providers(),
-    state: Cloudflare.state(),
+    state: (await import("../../infra/signalboxStateStore.ts")).signalboxStateStore(),
   },
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
