@@ -1,30 +1,17 @@
-// signalbox: the folder a new-task draft starts in, recorded when the draft is made.
-import { useAtomValue } from "@effect/atom-react";
+// signalbox: a new-task draft's folder home lives beside its durable project stamp.
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
 import { useEffect, useMemo } from "react";
 
-import { appAtomRegistry } from "../../state/atom-registry";
-import { getComposerDraftSnapshot, isComposerDraftEmpty } from "../../state/use-composer-drafts";
+import {
+  isComposerDraftEmpty,
+  setNewTaskDraftFolderStart,
+  useComposerDraft,
+  type ComposerDraft,
+} from "../../state/use-composer-drafts";
 import type { FolderStart } from "./folder-filter";
 import type { PoolHome } from "./folder-pool";
 import { useNewTaskFolderStart } from "./use-folder-filter";
-
-/**
- * Each draft's folder by draft key. In memory: a draft resumed after the app
- * restarts starts where its project's threads live.
- */
-const draftFoldersAtom = Atom.make<ReadonlyMap<string, FolderStart>>(new Map()).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("signalbox:draft-folders"),
-);
-
-/** Records `start` for `draftKey` unless the draft already has a folder or content of its own. */
-function recordDraftFolder(draftKey: string, start: FolderStart) {
-  const current = appAtomRegistry.get(draftFoldersAtom);
-  if (current.has(draftKey) || !isComposerDraftEmpty(getComposerDraftSnapshot(draftKey))) return;
-  appAtomRegistry.set(draftFoldersAtom, new Map([...current, [draftKey, start]]));
-}
+import { restoredDraftFolderStart } from "./restored-draft-folder";
 
 /** A new task's folders: where one starts now, and where this draft goes. */
 export interface NewTaskFolders {
@@ -36,12 +23,14 @@ export interface NewTaskFolders {
   readonly poolHome: PoolHome | undefined;
 }
 
+
 export function useNewTaskFolders(
   draftKey: string | null,
   project: { readonly environmentId: EnvironmentId; readonly id: ProjectId } | null,
 ): NewTaskFolders {
   const start = useNewTaskFolderStart();
-  const target = useDraftFolder({ draftKey, start, project });
+  const draft = useComposerDraft(draftKey);
+  const target = useDraftFolder({ draftKey, start, project, draft });
   return useMemo(
     () => ({ start, target, poolHome: target ? { folderId: target.folderId } : undefined }),
     [start, target],
@@ -49,24 +38,35 @@ export function useNewTaskFolders(
 }
 
 /**
- * The folder the draft is filed in when it's sent: the one shown when it was
- * made (`start`), while it still works in that folder's project. A draft
- * moved to another project starts where that project's threads live.
+ * First-open seeds the current folder on an empty draft; capture writes its
+ * explicit choice directly. A resumed draft keeps that start across restarts.
  */
 function useDraftFolder(input: {
   readonly draftKey: string | null;
   readonly start: FolderStart | null;
   readonly project: { readonly environmentId: EnvironmentId; readonly id: ProjectId } | null;
+  readonly draft: ComposerDraft;
 }): FolderStart | null {
-  const { draftKey, start } = input;
+  const { draftKey, start, project, draft } = input;
+  const stamp = draft.project;
+
   useEffect(() => {
-    if (draftKey !== null && start !== null) recordDraftFolder(draftKey, start);
-  }, [draftKey, start]);
-  const recorded = useAtomValue(draftFoldersAtom).get(input.draftKey ?? "");
-  const project = input.project;
-  return recorded !== undefined &&
-    project?.environmentId === recorded.environmentId &&
-    project.id === recorded.projectId
-    ? recorded
-    : null;
+    if (
+      draftKey === null ||
+      start === null ||
+      project === null ||
+      !stamp ||
+      stamp.folderStart !== undefined ||
+      !isComposerDraftEmpty(draft) ||
+      project.environmentId !== stamp.environmentId ||
+      project.id !== stamp.projectId ||
+      start.environmentId !== stamp.environmentId ||
+      start.projectId !== stamp.projectId
+    ) {
+      return;
+    }
+    setNewTaskDraftFolderStart(draftKey, start);
+  }, [draft, draftKey, project, stamp, start]);
+
+  return useMemo(() => restoredDraftFolderStart(stamp, project), [project, stamp]);
 }
