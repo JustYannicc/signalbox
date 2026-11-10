@@ -14,6 +14,7 @@ import * as AccountFlow from "@signalbox/account/AccountFlow";
 import {
   WORKOS_TEST_ENV,
   type WorkOSCodes,
+  type WorkOSMemberships,
   workosStubLayer,
 } from "@signalbox/account/WorkOSTesting";
 import * as AccountService from "./AccountService.ts";
@@ -34,10 +35,11 @@ export const environmentAuthLayer = EnvironmentAuth.layer.pipe(
 export const accountTestLayer = (options: {
   readonly codes?: WorkOSCodes;
   readonly exchanges?: Array<Record<string, unknown>>;
+  readonly memberships?: WorkOSMemberships;
   readonly env?: Readonly<Record<string, string>>;
 }) =>
   AccountService.layer.pipe(
-    Layer.provide(workosStubLayer(options.codes ?? {}, options.exchanges)),
+    Layer.provide(workosStubLayer(options.codes ?? {}, options.exchanges, options.memberships)),
     Layer.provide(
       ConfigProvider.layer(ConfigProvider.fromEnv({ env: options.env ?? WORKOS_TEST_ENV })),
     ),
@@ -62,7 +64,7 @@ export const browserParams: AccountAuthorizeParams = {
   returnTo: "/threads",
 };
 export const nativeParams: AccountAuthorizeParams = {
-  provider: "email",
+  provider: "google",
   origin: "https://box.example.com",
   mode: "native",
   returnUrl: "signalbox://auth/return",

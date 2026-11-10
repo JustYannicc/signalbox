@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import { signLocalKey, verifyLocalKey } from "../localKeys/LocalKeys.ts";
-import { layerConfig, makeMemoryCloud } from "../testing.ts";
+import { CLOUD_TEST_ENV, layerConfig, makeMemoryCloud } from "../testing.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import { handleApiRequest } from "./apiRoutes.ts";
 
@@ -13,17 +13,45 @@ const userId = "user_1";
 const user = { id: userId, email: "a@b.c" };
 
 /** `handleApiRequest` against an in-memory cloud and a WorkOS that approved `approved` devices. */
-const setup = (options: { readonly approved?: boolean; readonly signedUp?: boolean } = {}) =>
+const setup = (
+  options: {
+    readonly approved?: boolean;
+    readonly signedUp?: boolean;
+    readonly multipleOrganizations?: boolean;
+  } = {},
+) =>
   Effect.gen(function* () {
     const cloud = makeMemoryCloud();
+    const config = layerConfig(
+      options.multipleOrganizations
+        ? { ...CLOUD_TEST_ENV, T3CODE_WORKOS_API_KEY: "sk_test" }
+        : undefined,
+    );
     if (options.signedUp !== false) {
       yield* cloud.userDirectory.forUser(userId).recordSignIn(user);
     }
     const layer = Layer.mergeAll(
-      CloudTokens.layer.pipe(Layer.provide(layerConfig())),
-      layerConfig(),
+      CloudTokens.layer.pipe(Layer.provide(config)),
+      config,
       Layer.succeed(UserDirectory.UserDirectory, cloud.userDirectory),
-      workosStubLayer(options.approved === false ? {} : { [TEST_DEVICE_CODE]: user }),
+      workosStubLayer(
+        options.approved === false
+          ? {}
+          : {
+              [TEST_DEVICE_CODE]: options.multipleOrganizations
+                ? { select: { user, organizationId: "org_personal" } }
+                : user,
+            },
+        [],
+        options.multipleOrganizations
+          ? {
+              [userId]: [
+                { id: "org_personal", name: "Personal" },
+                { id: "org_work", name: "Work" },
+              ],
+            }
+          : {},
+      ),
     );
     const request = (path: string, init?: RequestInit) =>
       handleApiRequest(new Request(`https://cloud.test/api/v1/${path}`, init)).pipe(
@@ -50,6 +78,12 @@ const login = (post: Effect.Success<ReturnType<typeof setup>>["post"]) =>
   });
 
 describe("public API routes", () => {
+  it.effect("finishes device-code organization selection on the server", () =>
+    Effect.gen(function* () {
+      const { post } = yield* setup({ multipleOrganizations: true });
+      expect((yield* login(post)).status).toBe(200);
+    }),
+  );
   it.effect("lists operations with whether this cloud serves them", () =>
     Effect.gen(function* () {
       const { request } = yield* setup();

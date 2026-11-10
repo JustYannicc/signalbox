@@ -1,6 +1,8 @@
 import * as AccountFlow from "@signalbox/account/AccountFlow";
 import * as WorkOSClient from "@signalbox/account/WorkOSClient";
 import * as WorkOSOrganizations from "@signalbox/account/WorkOSOrganizations";
+import * as WorkOSPersonalAuthentication from "@signalbox/account/WorkOSPersonalAuthentication";
+import * as WorkOSMagicAuth from "@signalbox/account/WorkOSMagicAuth";
 import type {
   AccountAuthorizeParams,
   AccountHandoffRequest,
@@ -100,11 +102,12 @@ export class CloudAccounts extends Context.Service<
       credentials: Credentials,
     ) => Effect.Effect<AccountSessionState, UserDirectory.UserObjectError>;
     /**
-     * The WorkOS URL to send the browser to. Browser mode also returns the
+     * The next sign-in URL, relative for first-party steps. Browser mode also returns the
      * binding the route sets as `SIGN_IN_BINDING_COOKIE`.
      */
     readonly authorize: (
       params: AccountAuthorizeParams,
+      credentials?: Credentials,
     ) => Effect.Effect<
       { readonly location: string; readonly binding?: string },
       CloudSignInRequestError
@@ -118,7 +121,9 @@ export class CloudAccounts extends Context.Service<
       workos?: WorkOSClient.WorkOSConfig,
     ) => Effect.Effect<
       SignInResult,
-      UserDirectory.UserObjectError | IdentityProvider.IdentityProviderUnavailable
+      | UserDirectory.UserObjectError
+      | IdentityProvider.IdentityProviderUnavailable
+      | WorkOSClient.WorkOSAuthenticateError
     >;
     readonly verifyEmail: (
       body: AccountVerifyEmailRequest,
@@ -173,7 +178,7 @@ const make = Effect.gen(function* () {
   const identityProviders = yield* IdentityProvider.IdentityProviders;
 
   const workosAuthenticate = (grant: WorkOSClient.WorkOSGrant) =>
-    WorkOSClient.authenticate(workos, grant).pipe(
+    WorkOSPersonalAuthentication.authenticate(workos, grant).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
 
@@ -209,7 +214,10 @@ const make = Effect.gen(function* () {
         WorkOSOrganizations.resolvePersonalOrganization(realm, userId).pipe(
           Effect.timeoutOrElse({
             duration: CONTEXTS_SYNC_TIMEOUT,
-            orElse: () => Effect.fail(new WorkOSOrganizations.WorkOSPersonalOrganizationError({})),
+            orElse: () =>
+              Effect.fail(
+                new WorkOSOrganizations.WorkOSPersonalOrganizationError({ operation: "resolve" }),
+              ),
           }),
         ),
       ],
@@ -257,7 +265,7 @@ const make = Effect.gen(function* () {
   });
 
   const authorize: CloudAccounts["Service"]["authorize"] = Effect.fn("CloudAccounts.authorize")(
-    function* (params) {
+    function* (params, credentials) {
       if (!providers.includes(params.provider)) {
         return yield* new CloudSignInRequestError({ reason: "provider is not enabled" });
       }
@@ -265,23 +273,87 @@ const make = Effect.gen(function* () {
       if (Result.isFailure(validated)) {
         return yield* new CloudSignInRequestError({ reason: validated.failure });
       }
+      const request = validated.success;
+      const returning =
+        request.provider === "email" &&
+        !request.loginHint?.trim() &&
+        !request.selectAccount &&
+        credentials
+          ? (yield* sessionState(credentials).pipe(Effect.orElseSucceed(() => null)))?.account
+          : null;
+      const email =
+        request.provider === "email"
+          ? (request.loginHint?.trim() || returning?.email)?.toLowerCase()
+          : undefined;
+      if (request.provider === "email" && !email) {
+        // Native clients start without an email. Collect it in our own page,
+        // retaining their handoff target instead of entering hosted AuthKit.
+        const query = new URLSearchParams();
+        for (const [key, value] of Object.entries(params)) {
+          if (typeof value === "string") query.set(key, value);
+        }
+        return { location: `/sign-in?${query}` };
+      }
+      if (
+        email &&
+        !Schema.is(Schema.String.check(Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)))(email)
+      ) {
+        return yield* new CloudSignInRequestError({ reason: "email is invalid" });
+      }
+      const personal = email
+        ? yield* WorkOSPersonalAuthentication.emailOrganization(workos, email).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.tapError((error) =>
+              Effect.logWarning("WorkOS personal email lookup failed", {
+                errorTag: error._tag,
+                status: error.status,
+              }),
+            ),
+            Effect.orElseSucceed(() => null),
+          )
+        : null;
       const codeVerifier = AccountFlow.randomToken();
       const binding =
         validated.success.target.mode === "browser" ? AccountFlow.randomToken() : undefined;
+      const attempt: CloudTokens.PendingAttempt = {
+        codeVerifier,
+        origin: email && !personal ? "" : request.origin,
+        target: request.target,
+        ...(binding ? { binding } : {}),
+        ...(personal ? { userId: personal.userId } : {}),
+      };
+      if (email && !personal) {
+        if (!workos.apiKey) {
+          return yield* new CloudSignInRequestError({
+            reason: "email sign-in requires a WorkOS API key",
+          });
+        }
+        yield* WorkOSMagicAuth.sendCode({ ...workos, apiKey: workos.apiKey }, email).pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.mapError(
+            () => new CloudSignInRequestError({ reason: "email sign-in is unavailable" }),
+          ),
+        );
+        const verify = yield* tokens.seal({
+          _tag: "verification",
+          attempt,
+          email,
+          method: "magic-auth",
+          exp: (yield* Clock.currentTimeMillis) + VERIFICATION_TTL_MS,
+        });
+        const location = AccountFlow.verifyEmailLocation("", verify, email);
+        return binding ? { location, binding } : { location };
+      }
       const state = yield* tokens.seal({
         _tag: "attempt",
-        attempt: {
-          codeVerifier,
-          origin: validated.success.origin,
-          target: validated.success.target,
-          ...(binding ? { binding } : {}),
-        },
+        attempt,
         exp: (yield* Clock.currentTimeMillis) + ATTEMPT_TTL_MS,
       });
       const location = AccountFlow.buildWorkOSAuthorizeUrl({
         apiBaseUrl: workos.apiBaseUrl,
         clientId: workos.clientId,
-        request: validated.success,
+        ...(personal ? { organizationId: personal.organizationId } : {}),
+        request: email ? { ...request, loginHint: email } : request,
         state,
         codeChallenge: AccountFlow.pkceChallenge(codeVerifier),
       });
@@ -297,6 +369,9 @@ const make = Effect.gen(function* () {
     user: WorkOSClient.WorkOSUser,
     override?: WorkOSClient.WorkOSConfig,
   ) {
+    if (attempt.userId !== undefined && attempt.userId !== user.id) {
+      return yield* new WorkOSClient.WorkOSAuthenticateError({ error: "identity_changed" });
+    }
     const resolved = yield* identityProviders.identityProviderForUser(user.id);
     const identityProvider = override ?? resolved;
     const userObject = users.forUser(user.id);
@@ -409,11 +484,20 @@ const make = Effect.gen(function* () {
     }
     // WorkOS keeps the pending token alive across wrong codes and rate-limits
     // them, so a sealed id can be retried without a local failure count.
-    const user = yield* workosAuthenticate({
-      kind: "email-verification",
-      code: body.code,
-      pendingToken: Redacted.make(pending.pendingToken),
-    }).pipe(
+    if (pending.method !== "magic-auth" && !pending.pendingToken) return yield* expired();
+    const user = yield* workosAuthenticate(
+      pending.method === "magic-auth"
+        ? {
+            kind: "magic-auth",
+            email: pending.email,
+            code: body.code,
+          }
+        : {
+            kind: "email-verification",
+            code: body.code,
+            pendingToken: Redacted.make(pending.pendingToken!),
+          },
+    ).pipe(
       Effect.tapError(logSignInFailure),
       Effect.mapError(
         (error) =>

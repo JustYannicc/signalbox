@@ -1,10 +1,11 @@
-import type {
-  AccountAuthorizeParams,
-  AccountHandoffRequest,
-  AccountHandoffResult,
-  AccountSessionState,
-  AccountSignInError,
-  AccountVerifyEmailRequest,
+import {
+  ACCOUNT_SIGN_IN_ROUTE,
+  type AccountAuthorizeParams,
+  type AccountHandoffRequest,
+  type AccountHandoffResult,
+  type AccountSessionState,
+  type AccountSignInError,
+  type AccountVerifyEmailRequest,
 } from "@t3tools/contracts/account";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -23,9 +24,20 @@ import * as AccountSessions from "./AccountSessions.ts";
 import * as AccountVerifications from "./AccountVerifications.ts";
 import { makeExpiringStore } from "./ExpiringStore.ts";
 import * as WorkOSClient from "@signalbox/account/WorkOSClient";
+import * as WorkOSMagicAuth from "@signalbox/account/WorkOSMagicAuth";
+import * as WorkOSPersonalAuthentication from "@signalbox/account/WorkOSPersonalAuthentication";
 
 const ATTEMPT_TTL = Duration.minutes(10);
 const MAX_PENDING_ATTEMPTS = 1_000;
+
+const signInRequestLocation = (params: AccountAuthorizeParams, error?: AccountSignInError) => {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(key, value);
+  }
+  if (error) query.set("error", error);
+  return `${ACCOUNT_SIGN_IN_ROUTE}?${query.toString()}`;
+};
 
 export class AccountDisabledError extends Schema.TaggedError<AccountDisabledError>()(
   "AccountDisabledError",
@@ -129,7 +141,7 @@ const make = Effect.gen(function* () {
 
   const requireConfig = config ? Effect.succeed(config) : Effect.fail(new AccountDisabledError());
   const workosAuthenticate = (workos: WorkOSClient.WorkOSConfig, grant: WorkOSClient.WorkOSGrant) =>
-    WorkOSClient.authenticate(workos, grant).pipe(
+    WorkOSPersonalAuthentication.authenticate(workos, grant).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
 
@@ -151,26 +163,86 @@ const make = Effect.gen(function* () {
       if (Result.isFailure(validated)) {
         return yield* new AccountInvalidRequestError({ reason: validated.failure });
       }
-      const state = AccountFlow.attemptState(validated.success.target);
-      const codeVerifier = AccountFlow.randomToken();
-      yield* attempts.put(state, {
-        codeVerifier,
-        origin: validated.success.origin,
+
+      const hostedAuthorize = (
+        options: {
+          readonly organizationId?: string;
+          readonly expectedUserId?: string;
+        } = {},
+      ) =>
+        Effect.gen(function* () {
+          const state = AccountFlow.attemptState(validated.success.target);
+          const codeVerifier = AccountFlow.randomToken();
+          yield* attempts.put(state, {
+            codeVerifier,
+            origin: validated.success.origin,
+            target: validated.success.target,
+            ...(options.expectedUserId === undefined
+              ? {}
+              : { expectedUserId: options.expectedUserId }),
+          });
+          return AccountFlow.buildWorkOSAuthorizeUrl({
+            apiBaseUrl: workos.apiBaseUrl,
+            clientId: workos.clientId,
+            request: validated.success,
+            state,
+            codeChallenge: AccountFlow.pkceChallenge(codeVerifier),
+            ...(options.organizationId === undefined
+              ? {}
+              : { organizationId: options.organizationId }),
+          });
+        });
+
+      if (validated.success.provider !== "email") return yield* hostedAuthorize();
+
+      const email = validated.success.loginHint?.trim();
+      if (!email) return signInRequestLocation(params);
+
+      const knownPersonalOrganization = yield* WorkOSPersonalAuthentication.emailOrganization(
+        workos,
+        email,
+      ).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.tapError((error) =>
+          Effect.logWarning("WorkOS personal email lookup failed", {
+            errorTag: error._tag,
+            status: error.status,
+          }),
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+      if (knownPersonalOrganization) {
+        return yield* hostedAuthorize({
+          organizationId: knownPersonalOrganization.organizationId,
+          expectedUserId: knownPersonalOrganization.userId,
+        });
+      }
+
+      if (!workos.apiKey) return signInRequestLocation(params, "failed");
+      const attempt: AccountSessions.PendingAttempt = {
+        codeVerifier: AccountFlow.randomToken(),
+        origin: undefined,
         target: validated.success.target,
-      });
-      return AccountFlow.buildWorkOSAuthorizeUrl({
-        apiBaseUrl: workos.apiBaseUrl,
-        clientId: workos.clientId,
-        request: validated.success,
-        state,
-        codeChallenge: AccountFlow.pkceChallenge(codeVerifier),
-      });
+      };
+      return yield* WorkOSMagicAuth.sendCode({ ...workos, apiKey: workos.apiKey }, email).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.andThen(
+          verifications
+            .issue({ grant: { kind: "magic-auth", email }, email, attempt })
+            .pipe(Effect.map((id) => AccountFlow.verifyEmailLocation("", id, email))),
+        ),
+        Effect.catch((error) =>
+          logSignInFailure(error).pipe(Effect.as(signInRequestLocation(params, "failed"))),
+        ),
+      );
     },
   );
 
   const redirect = (location: string): CallbackResult => ({ _tag: "Redirect", location });
   const errorRedirect = (attempt: AccountSessions.PendingAttempt, error: AccountSignInError) =>
-    redirect(AccountFlow.callbackErrorLocation(attempt, error));
+    redirect(
+      AccountFlow.callbackErrorLocation({ ...attempt, origin: attempt.origin ?? "" }, error),
+    );
 
   const callback: AccountService["Service"]["callback"] = Effect.fn("AccountService.callback")(
     function* (input, request) {
@@ -186,7 +258,14 @@ const make = Effect.gen(function* () {
         code: input.code,
         codeVerifier: attempt.codeVerifier,
       }).pipe(
-        Effect.flatMap((user) => sessions.finish(attempt, user, request)),
+        Effect.flatMap((user) =>
+          Effect.gen(function* () {
+            if (attempt.expectedUserId !== undefined && user.id !== attempt.expectedUserId) {
+              return yield* new WorkOSClient.WorkOSAuthenticateError({ error: "invalid_response" });
+            }
+            return yield* sessions.finish(attempt, user, request);
+          }),
+        ),
         // WorkOS emailed a code (e.g. GitHub emails are not trusted): the
         // sign-in page collects it, in every mode.
         Effect.catchTags({
@@ -198,10 +277,19 @@ const make = Effect.gen(function* () {
                   "WorkOS requires T3CODE_WORKOS_API_KEY to finish email verification for this provider",
                 ).pipe(Effect.as(errorRedirect(attempt, "failed")))
               : verifications
-                  .issue({ pendingToken: required.pendingToken, email: required.email, attempt })
+                  .issue({
+                    grant: {
+                      kind: "email-verification",
+                      pendingToken: required.pendingToken,
+                    },
+                    email: required.email,
+                    attempt,
+                  })
                   .pipe(
                     Effect.map((id) =>
-                      redirect(AccountFlow.verifyEmailLocation(attempt.origin, id, required.email)),
+                      redirect(
+                        AccountFlow.verifyEmailLocation(attempt.origin ?? "", id, required.email),
+                      ),
                     ),
                   ),
         }),
@@ -217,10 +305,11 @@ const make = Effect.gen(function* () {
   )(function* (body, request) {
     const { workos } = yield* requireConfig;
     const { user, attempt } = yield* verifications
-      .verify(body.verify, (pendingToken) =>
-        workosAuthenticate(workos, { kind: "email-verification", code: body.code, pendingToken }),
-      )
+      .verify(body.verify, body.code, (grant) => workosAuthenticate(workos, grant))
       .pipe(Effect.tapError(logSignInFailure));
+    if (attempt.expectedUserId !== undefined && user.id !== attempt.expectedUserId) {
+      return yield* new WorkOSClient.WorkOSAuthenticateError({ error: "invalid_response" });
+    }
     return yield* sessions.finish(attempt, user, request);
   });
 
