@@ -1,3 +1,4 @@
+import { ProjectSearchContentsResult } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
@@ -24,6 +25,7 @@ const Cursor = Schema.Struct({
   seen: Schema.Array(Schema.String),
   current: Schema.optional(
     Schema.Struct({
+      repository: Schema.optional(Schema.NullOr(Schema.String)),
       commit: Schema.NullOr(Schema.String),
       excluded: Schema.Array(Schema.String),
       links: Schema.Array(Schema.Struct({ path: Schema.String, target: Schema.String })),
@@ -37,6 +39,14 @@ export type ContentSearchSource = typeof Source.Type;
 const codec = Schema.fromJsonString(Cursor);
 const decode = Schema.decodeUnknownOption(codec);
 const encode = Schema.encodeSync(codec);
+const Page = Schema.Struct({
+  response: ProjectSearchContentsResult,
+  skippedSource: Schema.Boolean,
+});
+export type ContentSearchPage = typeof Page.Type;
+const pageCodec = Schema.fromJsonString(Page);
+const decodePage = Schema.decodeUnknownOption(pageCodec);
+const encodePage = Schema.encodeSync(pageCodec);
 
 export class ContentSearchCursors extends Context.Service<
   ContentSearchCursors,
@@ -48,6 +58,11 @@ export class ContentSearchCursors extends Context.Service<
       expected: ContentSearchCursor,
       resolved: ContentSearchCursor,
     ) => Effect.Effect<ContentSearchCursor | null, SqlError>;
+    readonly readPage: (token: string) => Effect.Effect<ContentSearchPage | null, SqlError>;
+    readonly commitPage: (
+      token: string,
+      page: ContentSearchPage,
+    ) => Effect.Effect<ContentSearchPage | null, SqlError>;
   }
 >()("@signalbox/cloud/user/ContentSearchCursors") {}
 
@@ -55,9 +70,16 @@ export class ContentSearchCursors extends Context.Service<
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const crypto = yield* Crypto.Crypto;
-  const ensure = sql`CREATE TABLE IF NOT EXISTS drive_content_search_cursors (
-    token TEXT PRIMARY KEY, state TEXT NOT NULL, expires_at INTEGER NOT NULL
-  )`;
+  const ensure = Effect.gen(function* () {
+    yield* sql`CREATE TABLE IF NOT EXISTS drive_content_search_cursors (
+      token TEXT PRIMARY KEY, state TEXT NOT NULL, expires_at INTEGER NOT NULL
+    )`;
+    yield* sql`CREATE INDEX IF NOT EXISTS drive_content_search_cursors_expiry
+      ON drive_content_search_cursors (expires_at, token)`;
+    yield* sql`CREATE TABLE IF NOT EXISTS drive_content_search_pages (
+      token TEXT PRIMARY KEY, page TEXT NOT NULL
+    )`;
+  });
   const read = (token: string) =>
     Effect.gen(function* () {
       yield* ensure;
@@ -68,8 +90,31 @@ const make = Effect.gen(function* () {
         WHERE token = ${token} AND expires_at > ${now}`;
       return rows[0] === undefined ? null : Option.getOrNull(decode(rows[0].state));
     });
+  const readPage = (token: string) =>
+    Effect.gen(function* () {
+      yield* ensure;
+      const now = yield* Clock.currentTimeMillis;
+      const rows = yield* sql<{ readonly page: string }>`SELECT pages.page
+        FROM drive_content_search_pages AS pages
+        JOIN drive_content_search_cursors AS cursors ON cursors.token = pages.token
+        WHERE pages.token = ${token} AND cursors.expires_at > ${now}`;
+      return rows[0] === undefined ? null : Option.getOrNull(decodePage(rows[0].page));
+    });
   return ContentSearchCursors.of({
     read,
+    readPage,
+    commitPage: (token, page) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          yield* ensure;
+          const now = yield* Clock.currentTimeMillis;
+          yield* sql`INSERT INTO drive_content_search_pages (token, page)
+            SELECT token, ${encodePage(page)} FROM drive_content_search_cursors
+            WHERE token = ${token} AND expires_at > ${now}
+            ON CONFLICT (token) DO NOTHING`;
+          return yield* readPage(token);
+        }),
+      ),
     bind: (token, expected, resolved) =>
       sql.withTransaction(
         Effect.gen(function* () {
@@ -87,7 +132,14 @@ const make = Effect.gen(function* () {
         const token = yield* Effect.orDie(crypto.randomUUIDv4());
         yield* sql.withTransaction(
           Effect.gen(function* () {
-            yield* sql`DELETE FROM drive_content_search_cursors WHERE expires_at <= ${now}`;
+            const expired = yield* sql<{ readonly token: string }>`SELECT token
+              FROM drive_content_search_cursors WHERE expires_at <= ${now}
+              ORDER BY expires_at, token LIMIT 128`;
+            if (expired.length > 0) {
+              const tokens = expired.map((row) => row.token);
+              yield* sql`DELETE FROM drive_content_search_pages WHERE token IN ${sql.in(tokens)}`;
+              yield* sql`DELETE FROM drive_content_search_cursors WHERE token IN ${sql.in(tokens)}`;
+            }
             yield* sql`INSERT INTO drive_content_search_cursors (token, state, expires_at)
           VALUES (${token}, ${encode(state)}, ${now + 900_000})`;
           }),

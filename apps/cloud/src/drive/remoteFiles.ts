@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 
 import { GitHub } from "../github/GitHub.ts";
 import { DriveDirectory } from "./DriveDirectory.ts";
+import { HydrationRemoteError } from "./DriveHydration.ts";
 import { DriveReadError, makeDriveReader, type RemoteFiles } from "./DriveReader.ts";
 import { type Bytes, objectId, type Oid } from "./git/gitObjects.ts";
 
@@ -57,6 +58,44 @@ export const makeRemoteFiles = Effect.fn("makeRemoteFiles")(function* <E>(
     token.pipe(Effect.mapError(() => fail("GitHub can't be reached right now."))),
   );
   return {
+    range: ({ repository: frozenRepository, oid, offset, length, knownSize }) =>
+      Effect.gen(function* () {
+        if ((yield* repository) !== frozenRepository) {
+          return yield* fail("The drive's remote source has changed.");
+        }
+        const bearer = yield* userToken;
+        if (bearer === null) return yield* fail("Connect GitHub to read this file.");
+        const page = yield* github.api
+          .blobRange(bearer, frozenRepository, oid, offset, length)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new DriveReadError({
+                  message: "GitHub did not send the requested file range.",
+                  cause,
+                }),
+            ),
+          );
+        if (page === null) return null;
+        const size =
+          page.size ??
+          knownSize ??
+          (yield* github.api.blobSize(bearer, frozenRepository, oid).pipe(
+            Effect.mapError(
+              (cause) =>
+                new DriveReadError({
+                  message: "GitHub did not identify the file's size.",
+                  cause,
+                }),
+            ),
+          ));
+        if (size === null) return yield* fail("GitHub did not identify the file's size.");
+        return {
+          bytes: page.bytes,
+          totalSize: size,
+          complete: offset + page.bytes.length === size,
+        };
+      }).pipe(Effect.mapError((cause) => new HydrationRemoteError({ oid, cause }))),
     blob: (oid) =>
       Effect.gen(function* () {
         const key = cacheKey(driveId, oid);

@@ -15,7 +15,11 @@ import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import type { Actor } from "../thread/ThreadEngine.ts";
 import { driveOfProject, driveOfRoot, threadWorktreeAt } from "./contextProjects.ts";
-import { type ContentSearchCursor, type ContentSearchSource } from "./ContentSearchCursors.ts";
+import {
+  type ContentSearchCursor,
+  type ContentSearchPage,
+  type ContentSearchSource,
+} from "./ContentSearchCursors.ts";
 import * as ContentSearchCursors from "./ContentSearchCursors.ts";
 import * as UserDrives from "./UserDrives.ts";
 import * as UserFolders from "./UserFolders.ts";
@@ -109,15 +113,18 @@ const make = Effect.gen(function* () {
         return yield* new SearchErrors.ContentSearchUnavailable({});
       const worktree = threadWorktreeAt(input.cwd);
       const root = worktree?.driveId ?? driveOfRoot(input.cwd, userId);
-      if (root === null || !(yield* allowed(actor, root)))
-        return yield* new SearchErrors.ContentSearchDenied({});
-      if (worktree !== null) {
-        const snapshot = yield* threads
-          .threadSnapshot(actor, worktree.threadId)
-          .pipe(Effect.mapError((cause) => new SearchErrors.ContentSearchDenied({ cause })));
-        if (driveOfProject(snapshot.projection.thread.projectId, userId) !== root)
-          return yield* new SearchErrors.ContentSearchDenied({});
-      }
+      if (root === null) return yield* new SearchErrors.ContentSearchDenied({});
+      const authorizeRoot = Effect.gen(function* () {
+        if (!(yield* allowed(actor, root))) return yield* new SearchErrors.ContentSearchDenied({});
+        if (worktree !== null) {
+          const snapshot = yield* threads
+            .threadSnapshot(actor, worktree.threadId)
+            .pipe(Effect.mapError((cause) => new SearchErrors.ContentSearchDenied({ cause })));
+          if (driveOfProject(snapshot.projection.thread.projectId, userId) !== root)
+            return yield* new SearchErrors.ContentSearchDenied({});
+        }
+      });
+      yield* authorizeRoot;
       const fingerprint = fingerprintOf([
         input.cwd,
         input.query,
@@ -143,16 +150,73 @@ const make = Effect.gen(function* () {
         truncated: false,
       };
       const source = state.sources[0];
-      if (source === undefined) return { matches: [], truncated: state.truncated };
+      let links = state.current?.links;
+      let repository = state.current?.repository;
+      const sameSource = Effect.gen(function* () {
+        if (source === undefined) return;
+        if (repository === undefined) return yield* new SearchErrors.ContentSearchExpired({});
+        const remote = yield* atStage(
+          "source_references",
+          directory.value.forDrive(source.driveId).remote(),
+        );
+        if ((remote?.repository ?? null) !== repository)
+          return yield* new SearchErrors.ContentSearchReferencesChanged({});
+      });
+      const validate = (page: ContentSearchPage) =>
+        Effect.gen(function* () {
+          // Persisted snippets never replace current membership, thread, repository or route access.
+          yield* authorizeRoot;
+          if (source === undefined) return page.response;
+          const accessible = yield* sourceAllowed(actor, source);
+          if (page.skippedSource && page.response.matches.length === 0) return page.response;
+          if (!accessible) return yield* new SearchErrors.ContentSearchDenied({});
+          yield* sameSource;
+          if (links === undefined) return yield* new SearchErrors.ContentSearchExpired({});
+          const previous = links;
+          const now = yield* atStage(
+            "source_references",
+            directory.value.forDrive(source.driveId).shortcuts(),
+          );
+          if (
+            now.length !== previous.length ||
+            now.some(
+              (link) =>
+                !previous.some((old) => old.path === link.path && old.target === link.target),
+            )
+          )
+            return yield* new SearchErrors.ContentSearchReferencesChanged({});
+          return page.response;
+        });
+      const finish = (response: ProjectSearchContentsResult, skippedSource = false) =>
+        Effect.gen(function* () {
+          const page = { response, skippedSource };
+          yield* validate(page);
+          if (input.cursor === undefined) return response;
+          const canonical = yield* atStage(
+            "cursor_page_save",
+            cursors.commitPage(input.cursor, page),
+          );
+          if (canonical === null) return yield* new SearchErrors.ContentSearchExpired({});
+          return yield* validate(canonical);
+        });
+      const cached =
+        input.cursor === undefined
+          ? null
+          : yield* atStage("cursor_page_read", cursors.readPage(input.cursor));
+      if (cached !== null) return yield* validate(cached);
+      if (source === undefined) return yield* finish({ matches: [], truncated: state.truncated });
       if (!(yield* sourceAllowed(actor, source))) {
         state = { ...state, sources: state.sources.slice(1), current: undefined };
-        return {
-          matches: [],
-          truncated: state.sources.length > 0 || state.truncated,
-          ...(state.sources.length > 0
-            ? { nextCursor: yield* atStage("cursor_save", cursors.save(state)) }
-            : {}),
-        };
+        return yield* finish(
+          {
+            matches: [],
+            truncated: state.sources.length > 0 || state.truncated,
+            ...(state.sources.length > 0
+              ? { nextCursor: yield* atStage("cursor_save", cursors.save(state)) }
+              : {}),
+          },
+          true,
+        );
       }
       if (state.current === undefined) {
         const shortcuts = yield* atStage(
@@ -182,6 +246,11 @@ const make = Effect.gen(function* () {
           seen: [...seen],
           sources: [...state.sources, ...added],
           current: {
+            repository:
+              (yield* atStage(
+                "source_references",
+                directory.value.forDrive(source.driveId).remote(),
+              ))?.repository ?? null,
             commit: yield* atStage(
               "snapshot",
               files.value.contentSearchSnapshot(source.driveId, at),
@@ -197,6 +266,9 @@ const make = Effect.gen(function* () {
         }
       }
       const current = state.current!;
+      links = current.links;
+      repository = current.repository;
+      yield* sameSource;
       const result = yield* atStage(
         "scan",
         files.value.searchContents(
@@ -207,23 +279,6 @@ const make = Effect.gen(function* () {
           current.excluded,
         ),
       );
-      // Membership or the reference route may have changed while R2/GitHub was being read.
-      if (!(yield* allowed(actor, root)) || !(yield* sourceAllowed(actor, source)))
-        return yield* new SearchErrors.ContentSearchDenied({});
-      const nowShortcuts = yield* atStage(
-        "source_references",
-        directory.value.forDrive(source.driveId).shortcuts(),
-      );
-      if (
-        nowShortcuts.length !== current.links.length ||
-        nowShortcuts.some(
-          (link) =>
-            !current.links.some(
-              (previous) => previous.path === link.path && previous.target === link.target,
-            ),
-        )
-      )
-        return yield* new SearchErrors.ContentSearchReferencesChanged({});
       state = {
         ...state,
         truncated: state.truncated || (result.truncated && result.nextState === undefined),
@@ -232,7 +287,7 @@ const make = Effect.gen(function* () {
           : { current: { ...current, scan: result.nextState } }),
       };
       const more = state.sources.length > 0;
-      return {
+      return yield* finish({
         matches: result.matches.map((match) => ({
           ...match,
           path: `${source.prefix}${match.path}`,
@@ -242,7 +297,7 @@ const make = Effect.gen(function* () {
           ? {}
           : { regexFallbackError: result.regexFallbackError }),
         ...(more ? { nextCursor: yield* atStage("cursor_save", cursors.save(state)) } : {}),
-      };
+      });
     },
   );
   return DriveContentSearch.of({ query });

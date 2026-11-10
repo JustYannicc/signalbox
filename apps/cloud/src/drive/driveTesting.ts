@@ -17,6 +17,7 @@ import * as DriveDirectory from "./DriveDirectory.ts";
 import { makeDriveObjectApi } from "./driveObjectApi.ts";
 import * as DrivePacks from "./DrivePacks.ts";
 import type * as DriveMembers from "./DriveMembers.ts";
+import type * as DriveMetadata from "./DriveMetadata.ts";
 import * as DriveStore from "./DriveStore.ts";
 import { parseCommit, type Bytes } from "./git/gitObjects.ts";
 import { verifyPack } from "./git/gitPack.ts";
@@ -46,7 +47,10 @@ export const makeMemoryDrives = (
       effect: Effect.Effect<
         A,
         E,
-        DriveStore.DriveStore | DriveMembers.DriveMembers | DriveEvents.DriveEvents
+        | DriveStore.DriveStore
+        | DriveMembers.DriveMembers
+        | DriveEvents.DriveEvents
+        | DriveMetadata.DriveMetadata
       >,
     ) => {
       ready ??= runtime.runPromise(DriveStore.DriveStore.use((store) => store.initialize));
