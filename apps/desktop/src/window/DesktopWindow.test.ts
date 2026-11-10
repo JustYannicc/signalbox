@@ -1621,6 +1621,47 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect(
+    "defers a queued quick capture until normal backend startup reveals the main window",
+    () =>
+      Effect.gen(function* () {
+        const splash = makeFakeBrowserWindow();
+        const main = makeFakeBrowserWindow();
+        const scenario = yield* makeSplashScenario([splash.window, main.window]);
+        const splashDismissed = Promise.withResolvers<void>();
+        vi.mocked(splash.window.close).mockImplementation(splashDismissed.resolve);
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.showConnectingSplash;
+          yield* desktopWindow.dispatchCaptureEvent(
+            {
+              type: "queued",
+              capture: {
+                id: "aaaa",
+                text: "Keep this",
+                files: [],
+                destinationKey: "account:home",
+                source: "quick-capture",
+                capturedAt: 1,
+                open: false,
+                deliveryError: null,
+              },
+            },
+            { createHiddenIfMissing: true },
+          );
+          assert.equal(yield* Ref.get(scenario.createCalls), 1);
+          assert.isTrue(Option.isNone(yield* Ref.get(scenario.mainWindow)));
+          assert.deepEqual(splash.send.mock.calls, []);
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.equal(yield* Ref.get(scenario.createCalls), 2);
+          assert.equal(Option.getOrThrow(yield* Ref.get(scenario.mainWindow)), main.window);
+          main.windowListeners.get("ready-to-show")?.();
+          yield* Effect.promise(() => splashDismissed.promise);
+          assert.deepEqual(yield* Ref.get(scenario.revealedWindows), [main.window]);
+        }).pipe(Effect.provide(scenario.layer));
+      }),
+  );
+
   it.effect("does not reopen a closed main window for a completed capture", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();

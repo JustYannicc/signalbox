@@ -176,6 +176,15 @@ export const SnapShotShortcut = Schema.Union([
   SnapShotKeyChord,
 ]);
 export type SnapShotShortcut = typeof SnapShotShortcut.Type;
+
+const DEFAULT_CAPTURE_GLOBAL_SHORTCUT: SnapShotKeyChord = {
+  key: " ",
+  metaKey: false,
+  ctrlKey: false,
+  shiftKey: true,
+  altKey: false,
+  modKey: true,
+};
 export const SnapShotSound = Schema.Literals(["soft-pop", "camera-shutter"]);
 export type SnapShotSound = typeof SnapShotSound.Type;
 const DEFAULT_SNAP_SHOT_SOUND: SnapShotSound = "soft-pop";
@@ -452,6 +461,12 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   snapShotFlash: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotAnimations: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  captureGlobalShortcutEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  captureGlobalShortcut: SnapShotKeyChord.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CAPTURE_GLOBAL_SHORTCUT)),
+  ),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -1598,6 +1613,8 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotSound: Schema.optionalKey(SnapShotSound),
   snapShotFlash: Schema.optionalKey(Schema.Boolean),
   snapShotAnimations: Schema.optionalKey(Schema.Boolean),
+  captureGlobalShortcutEnabled: Schema.optionalKey(Schema.Boolean),
+  captureGlobalShortcut: Schema.optionalKey(SnapShotKeyChord),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

@@ -33,6 +33,7 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
+import * as DesktopQuickCapture from "../capture/DesktopQuickCapture.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 import * as DesktopT3Import from "../signalbox/DesktopT3Import.ts"; // signalbox: one-time T3 Code import
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
@@ -166,6 +167,7 @@ const bootstrap = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
+  const quickCapture = yield* DesktopQuickCapture.DesktopQuickCapture;
   const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
   yield* logBootstrapInfo("bootstrap start");
   yield* DesktopT3Import.offerT3Import; // signalbox: offer the T3 Code import before the backend creates state
@@ -187,6 +189,7 @@ const bootstrap = Effect.gen(function* () {
   );
 
   yield* snapShot.initialize;
+  yield* quickCapture.initialize;
 
   if (!settings.localEnvironmentEnabled) {
     yield* logBootstrapInfo("bootstrap skipping local environment (disabled in settings)");
