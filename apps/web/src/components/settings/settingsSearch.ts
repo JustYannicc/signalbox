@@ -33,6 +33,7 @@ export type SettingsPath =
   | "/settings/sign-in" // signalbox: sign-in grants
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
+  | "/settings/blocks" // signalbox: block library
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
@@ -99,6 +100,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/sign-in": "Sign-in", // signalbox: sign-in grants
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
+  "/settings/blocks": "Block library", // signalbox: block library
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
@@ -1077,6 +1079,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["deleted threads folders restore recover empty bin recycle permanently forever"],
     cloudOnly: true,
   },
+  // signalbox: block library
+  {
+    id: "block-library",
+    title: "Block library",
+    to: "/settings/blocks",
+    searchTerms: ["automations blocks w.start call reuse contracts input output workflows"],
+    cloudOnly: true,
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
@@ -1098,6 +1108,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
   "/settings/scheduled-tasks": null,
+  "/settings/blocks": null, // signalbox: block library
   "/settings/archived": "project-defaults",
   "/settings/trash": null, // signalbox: trash
 };

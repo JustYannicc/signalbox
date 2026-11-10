@@ -18,6 +18,7 @@ export type SettingsSheetTarget =
   | "SettingsScheduledTasks"
   | "SettingsTimeZone" // signalbox: person timezone
   | "SettingsConnectedServices" // signalbox: automations
+  | "SettingsAutomationBlocks" // signalbox: block library
   | "SettingsSignIn" // signalbox: sign-in grants
   | "SettingsTrash" // signalbox: trash
   | "SettingsProjectGrouping"

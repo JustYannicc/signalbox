@@ -2,7 +2,9 @@ import {
   AUTOMATION_WS_METHODS,
   EnvironmentId,
   type Automation,
+  type AutomationBlockLibraryResult,
   type AutomationNotice,
+  type ProjectId,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -10,9 +12,13 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
+import type { BlockLibraryQueryInput } from "../automations/blockLibrary.ts";
 import type * as EnvironmentRegistry from "../connection/registry.ts";
+import type * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { request } from "../rpc/client.ts";
 
 import {
+  createEnvironmentQueryAtomFamily,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
@@ -33,6 +39,22 @@ export interface EnvironmentAutomationList {
 /** The key `lists` and `waitingCount` take: environment ids, sorted, one per line. */
 export const environmentListKey = (environmentIds: Iterable<EnvironmentId>) =>
   [...environmentIds].sort().join("\n");
+
+/**
+ * `automations.listBlocks` for one library target. `send` makes the request;
+ * the input's `chain` only keys the query (`blockLibraryQueryInput`).
+ */
+export function createBlockLibraryQuery<R, ER, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  send: (input: {
+    readonly projectId: ProjectId;
+  }) => Effect.Effect<AutomationBlockLibraryResult, E, EnvironmentSupervisor.EnvironmentSupervisor>,
+) {
+  return createEnvironmentQueryAtomFamily(runtime, {
+    label: "environment-data:automations:blocks",
+    execute: (input: BlockLibraryQueryInput) => send({ projectId: input.projectId }),
+  });
+}
 
 /**
  * Automation state shared by web and mobile. Each client builds it once on its
@@ -93,6 +115,13 @@ export function createAutomationAtoms<R, E>(
     }),
     list,
     lists,
+    /**
+     * The block each name resolves to from one folder's files, nearest level
+     * first, then built-ins. Input: `blockLibraryQueryInput(target)`.
+     */
+    blocks: createBlockLibraryQuery(runtime, (input) =>
+      request(AUTOMATION_WS_METHODS.automationsListBlocks, input),
+    ),
     /** How many automations wait on an answer across `lists(key)`; a number, so badges only redraw when it changes. */
     waitingCount: Atom.family((key: string) =>
       Atom.make((get) =>

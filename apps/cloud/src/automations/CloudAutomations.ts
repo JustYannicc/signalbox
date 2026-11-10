@@ -1,4 +1,5 @@
 import type {
+  AutomationBlockLibraryResult,
   AutomationError,
   AutomationSaveInput,
   AutomationSaveResult,
@@ -62,6 +63,10 @@ export const hostOver = (
  * work it started here is done.
  */
 export interface CloudAutomationsShape {
+  /** Lists folder-scoped `w.start` winners without creating or running built-ins. */
+  readonly listBlocks: (
+    projectId: ProjectId,
+  ) => Effect.Effect<AutomationBlockLibraryResult, AutomationError>;
   /** Verifies and durably accepts a request before the Worker acknowledges it. */
   readonly receiveHook: (request: HookRequest) => Effect.Effect<HookAnswer, AutomationError>;
   readonly answerAsk: (

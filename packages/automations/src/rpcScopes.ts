@@ -12,6 +12,7 @@ export const AUTOMATION_RPC_SCOPES = {
   [AUTOMATION_WS_METHODS.automationsSubscribe]: AuthOrchestrationReadScope,
   [AUTOMATION_WS_METHODS.automationsSubscribeOne]: AuthOrchestrationReadScope,
   [AUTOMATION_WS_METHODS.automationsSubscribeRun]: AuthOrchestrationReadScope,
+  [AUTOMATION_WS_METHODS.automationsListBlocks]: AuthOrchestrationReadScope,
   [AUTOMATION_WS_METHODS.automationsSubscribeNotices]: AuthOrchestrationReadScope,
   [AUTOMATION_WS_METHODS.automationsSetEnabled]: AuthOrchestrationOperateScope,
   [AUTOMATION_WS_METHODS.automationsDelete]: AuthOrchestrationOperateScope,
