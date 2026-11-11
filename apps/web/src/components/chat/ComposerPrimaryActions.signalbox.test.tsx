@@ -143,6 +143,19 @@ describe("ComposerPrimaryActions stop pending state", () => {
     expect(slot()).toMatchObject({ ariaLabel: "Stop generation", disabled: false });
   });
 
+  it("keeps a pending stop when the run id clears and resets it for a different run", () => {
+    render(true, true, { runId: "first" });
+    clickStop();
+
+    render(true, true, { runId: null });
+    expect(slot()).toMatchObject({ ariaLabel: "Stopping", disabled: true });
+    clickStop();
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+
+    render(true, true, { runId: "second" });
+    expect(slot()).toMatchObject({ ariaLabel: "Stop generation", disabled: false });
+  });
+
   it("re-enables Stop when the stop never lands", () => {
     clickStop();
 
