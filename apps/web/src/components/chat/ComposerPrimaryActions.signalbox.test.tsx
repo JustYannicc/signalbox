@@ -94,6 +94,30 @@ describe("ComposerPrimaryActions stop pending state", () => {
     expect(onResume).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    { promptHasText: true, hasSendableContent: true },
+    {
+      pendingAction: {
+        questionIndex: 0,
+        isLastQuestion: true,
+        canAdvance: true,
+        isComplete: true,
+        isResponding: false,
+      },
+    },
+    { showPlanFollowUpPrompt: true, promptHasText: true, hasSendableContent: true },
+    { showPlanFollowUpPrompt: true, canResume: false },
+  ])("keeps pending Stop at the right edge when composer actions change: %j", (overrides) => {
+    clickStop();
+    render(true, true, overrides);
+
+    expect(slot()).toMatchObject({ ariaLabel: "Stopping", disabled: true });
+    for (let i = 0; i < 20; i++) clickStop();
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+    expect(onResume).not.toHaveBeenCalled();
+    expect(onSubmitMessage).not.toHaveBeenCalled();
+  });
+
   it("keeps the stopped slot when typed text swaps Resume for Submit", () => {
     clickStop();
     render(false);
@@ -116,6 +140,19 @@ describe("ComposerPrimaryActions stop pending state", () => {
     render(false);
     render(true);
 
+    expect(slot()).toMatchObject({ ariaLabel: "Stop generation", disabled: false });
+  });
+
+  it("keeps a pending stop when the run id clears and resets it for a different run", () => {
+    render(true, true, { runId: "first" });
+    clickStop();
+
+    render(true, true, { runId: null });
+    expect(slot()).toMatchObject({ ariaLabel: "Stopping", disabled: true });
+    clickStop();
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+
+    render(true, true, { runId: "second" });
     expect(slot()).toMatchObject({ ariaLabel: "Stop generation", disabled: false });
   });
 
